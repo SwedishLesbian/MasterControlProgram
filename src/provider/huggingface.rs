@@ -148,4 +148,17 @@ impl Provider for HuggingFaceProvider {
             Err(e) => Ok(format!("HuggingFace ({}): error — {}", self.name, e)),
         }
     }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        // HuggingFace has thousands of models; return popular inference-ready ones.
+        Ok(vec![
+            "meta-llama/Meta-Llama-3-70B-Instruct".into(),
+            "meta-llama/Meta-Llama-3-8B-Instruct".into(),
+            "mistralai/Mixtral-8x7B-Instruct-v0.1".into(),
+            "mistralai/Mistral-7B-Instruct-v0.3".into(),
+            "microsoft/Phi-3-mini-4k-instruct".into(),
+            "google/gemma-2-9b-it".into(),
+            self.model.clone(), // always include current
+        ])
+    }
 }

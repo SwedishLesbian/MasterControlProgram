@@ -426,6 +426,14 @@ impl AgentManager {
             .ok_or_else(|| anyhow::anyhow!("Provider '{name}' not configured"))?;
         provider.health_check().await
     }
+
+    pub async fn list_models(&self, provider_name: &str) -> Result<Vec<String>> {
+        let providers = self.providers.read().await;
+        let provider = providers
+            .get(provider_name)
+            .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not configured"))?;
+        provider.list_models().await
+    }
 }
 
 /// The main agent execution loop.

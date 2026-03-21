@@ -107,4 +107,19 @@ impl Provider for BedrockProvider {
             self.name, self.region, self.model
         ))
     }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        // Common Bedrock model IDs (ListFoundationModels requires extra permissions).
+        Ok(vec![
+            "anthropic.claude-3-5-sonnet-20241022-v2:0".into(),
+            "anthropic.claude-3-5-haiku-20241022-v1:0".into(),
+            "anthropic.claude-3-opus-20240229-v1:0".into(),
+            "amazon.titan-text-premier-v1:0".into(),
+            "amazon.titan-text-express-v1".into(),
+            "meta.llama3-70b-instruct-v1:0".into(),
+            "meta.llama3-8b-instruct-v1:0".into(),
+            "mistral.mixtral-8x7b-instruct-v0:1".into(),
+            self.model.clone(),
+        ])
+    }
 }

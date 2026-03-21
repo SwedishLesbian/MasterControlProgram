@@ -51,6 +51,11 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
 
     /// Lightweight connectivity / health check.
     async fn health_check(&self) -> Result<String>;
+
+    /// List available models from this provider.
+    /// Returns model IDs. Not all providers support this via API;
+    /// those return a curated list or the currently configured model.
+    async fn list_models(&self) -> Result<Vec<String>>;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────

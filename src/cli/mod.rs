@@ -79,6 +79,10 @@ pub enum Commands {
     #[command(subcommand)]
     Role(RoleCommands),
 
+    /// Configuration management
+    #[command(subcommand)]
+    Config(ConfigCommands),
+
     /// Provider management
     #[command(subcommand)]
     Provider(ProviderCommands),
@@ -320,6 +324,31 @@ pub enum WorkflowCommands {
     Validate {
         /// Workflow file path
         file: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Show the current configuration
+    Show,
+
+    /// Set the default provider
+    SetProvider {
+        /// Provider name (must be configured in config.toml)
+        name: String,
+    },
+
+    /// Set the default model
+    SetModel {
+        /// Model ID
+        name: String,
+    },
+
+    /// List available models for a provider (or the default provider)
+    Models {
+        /// Provider name (defaults to the current default provider)
+        #[arg(long)]
+        provider: Option<String>,
     },
 }
 

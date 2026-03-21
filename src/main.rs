@@ -311,6 +311,10 @@ async fn main() -> Result<()> {
 
         Commands::Role(role_cmd) => handle_role_command(role_cmd, json_output)?,
 
+        Commands::Config(config_cmd) => {
+            handle_config_command(config_cmd, &config, &manager, json_output).await?
+        }
+
         Commands::Tool(tool_cmd) => handle_tool_command(tool_cmd, json_output)?,
 
         Commands::Workflow(wf_cmd) => {
@@ -568,6 +572,157 @@ fn handle_role_command(cmd: RoleCommands, json_output: bool) -> Result<i32> {
                 println!("Role '{name}' updated");
             }
             Ok(0)
+        }
+    }
+}
+
+async fn handle_config_command(
+    cmd: cli::ConfigCommands,
+    config: &config::McpConfig,
+    manager: &AgentManager,
+    json_output: bool,
+) -> Result<i32> {
+    use cli::ConfigCommands;
+    match cmd {
+        ConfigCommands::Show => {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(config)?);
+            } else {
+                println!("Default provider: {}", config.default.provider);
+                println!("Default model:    {}", config.default.model);
+                println!();
+                println!("Server bind:      {}", config.server.bind);
+                println!("Server enabled:   {}", config.server.enabled);
+                println!();
+                println!("Limits:");
+                println!(
+                    "  Max concurrent agents: {}",
+                    config.limits.max_concurrent_agents
+                );
+                println!("  Max depth:             {}", config.limits.max_depth);
+                println!(
+                    "  Max children/parent:   {}",
+                    config.limits.max_children_per_parent
+                );
+                println!(
+                    "  Agent timeout:         {}s",
+                    config.limits.agent_timeout_sec
+                );
+                println!();
+                println!("Providers:");
+                for (name, entry) in &config.provider {
+                    let marker = if name == &config.default.provider {
+                        " (default)"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "  {name}{marker} — type: {}, model: {}",
+                        entry.provider_type,
+                        entry.model.as_deref().unwrap_or("-"),
+                    );
+                }
+            }
+            Ok(0)
+        }
+
+        ConfigCommands::SetProvider { name } => {
+            if !config.provider.contains_key(&name) {
+                eprintln!(
+                    "Provider '{name}' is not configured. Available: {}",
+                    config
+                        .provider
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return Ok(1);
+            }
+
+            let mut new_config = config.clone();
+            new_config.default.provider = name.clone();
+
+            // If the provider has a model configured, adopt it as the default
+            if let Some(entry) = config.provider.get(&name) {
+                if let Some(ref m) = entry.model {
+                    new_config.default.model = m.clone();
+                }
+            }
+
+            config::save_config(&new_config)?;
+
+            if json_output {
+                println!(
+                    "{}",
+                    json!({
+                        "default_provider": new_config.default.provider,
+                        "default_model": new_config.default.model,
+                    })
+                );
+            } else {
+                println!("Default provider set to: {}", new_config.default.provider);
+                println!("Default model set to:    {}", new_config.default.model);
+            }
+            Ok(0)
+        }
+
+        ConfigCommands::SetModel { name } => {
+            let mut new_config = config.clone();
+            new_config.default.model = name.clone();
+            config::save_config(&new_config)?;
+
+            if json_output {
+                println!(
+                    "{}",
+                    json!({"default_model": name, "default_provider": config.default.provider})
+                );
+            } else {
+                println!("Default model set to: {name}");
+            }
+            Ok(0)
+        }
+
+        ConfigCommands::Models { provider } => {
+            let provider_name = provider.as_deref().unwrap_or(&config.default.provider);
+
+            match manager.list_models(provider_name).await {
+                Ok(models) => {
+                    if json_output {
+                        println!(
+                            "{}",
+                            json!({"provider": provider_name, "models": models})
+                        );
+                    } else if models.is_empty() {
+                        println!("No models found for provider '{provider_name}'");
+                    } else {
+                        println!("Models available from '{provider_name}':\n");
+                        for (i, m) in models.iter().enumerate() {
+                            let marker = if *m == config.default.model {
+                                " ← default"
+                            } else {
+                                ""
+                            };
+                            println!("  {:>3}. {m}{marker}", i + 1);
+                        }
+                        println!(
+                            "\nUse `mcp config set-model <MODEL>` to change the default."
+                        );
+                    }
+                    Ok(0)
+                }
+                Err(e) => {
+                    if json_output {
+                        println!(
+                            "{}",
+                            json!({"provider": provider_name, "error": e.to_string()})
+                        );
+                    } else {
+                        eprintln!("Error listing models for '{provider_name}': {e}");
+                    }
+                    Ok(1)
+                }
+            }
         }
     }
 }

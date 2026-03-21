@@ -141,4 +141,18 @@ impl Provider for AnthropicProvider {
             .await?;
         Ok(format!("Anthropic ({}): HTTP {}", self.name, resp.status()))
     }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        // Anthropic doesn't have a public list-models endpoint.
+        // Return the well-known model families.
+        Ok(vec![
+            "claude-opus-4-20250514".into(),
+            "claude-sonnet-4-20250514".into(),
+            "claude-3-7-sonnet-20250219".into(),
+            "claude-3-5-sonnet-20241022".into(),
+            "claude-3-5-haiku-20241022".into(),
+            "claude-3-opus-20240229".into(),
+            "claude-3-haiku-20240307".into(),
+        ])
+    }
 }

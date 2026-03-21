@@ -141,4 +141,30 @@ impl Provider for NvidiaNimProvider {
             Err(e) => Ok(format!("NVIDIA NIM ({}): error — {}", self.name, e)),
         }
     }
+
+    async fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            bail!("Failed to list models: HTTP {}", resp.status());
+        }
+
+        let data: Value = resp.json().await?;
+        let mut models: Vec<String> = data["data"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["id"].as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        models.sort();
+        Ok(models)
+    }
 }

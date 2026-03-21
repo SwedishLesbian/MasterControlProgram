@@ -196,6 +196,15 @@ fn merge_config(base: &mut McpConfig, overlay: McpConfig) {
     }
 }
 
+/// Save a config to the global config file (~/.mcp/config.toml).
+pub fn save_config(config: &McpConfig) -> Result<()> {
+    let path = mcp_home().join("config.toml");
+    std::fs::create_dir_all(mcp_home())?;
+    let text = toml::to_string_pretty(config)?;
+    std::fs::write(&path, text).context("Failed to write config")?;
+    Ok(())
+}
+
 /// Ensure the MCP home directory and subdirectories exist.
 pub fn ensure_dirs() -> Result<()> {
     let home = mcp_home();
