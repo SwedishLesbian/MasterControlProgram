@@ -1,0 +1,603 @@
+mod agent;
+mod cli;
+mod config;
+mod logging;
+mod provider;
+mod role;
+mod server;
+
+use anyhow::Result;
+use clap::Parser;
+use serde_json::json;
+use std::sync::Arc;
+
+use crate::agent::{AgentManager, SpawnRequest, SteerRequest};
+use crate::cli::*;
+use crate::config::{ensure_dirs, load_config};
+use crate::role::RoleDefinition;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    logging::init_logging()?;
+    ensure_dirs()?;
+
+    let cli = Cli::parse();
+    let config = load_config()?;
+    let json_output = cli.json || config.cli.json_output;
+
+    let manager = Arc::new(AgentManager::new(&config)?);
+
+    let exit_code = match cli.command {
+        Commands::Spawn {
+            task,
+            role: role_name,
+            model,
+            provider,
+            depth,
+            max_depth,
+            max_children,
+            soul,
+            timeout,
+            system_prompt,
+            parent,
+        } => {
+            // Resolve role if specified
+            let mut sys_prompt = system_prompt;
+            let mut resolved_model = model;
+            let mut resolved_provider = provider;
+            let mut resolved_soul = soul;
+            let mut resolved_max_depth = max_depth;
+            let mut resolved_max_children = max_children;
+            let mut resolved_role_name = role_name.clone();
+
+            if let Some(ref rn) = role_name {
+                if let Ok(role_def) = role::get_role(rn) {
+                    if sys_prompt.is_none() {
+                        sys_prompt =
+                            Some(role::resolve_system_prompt(&role_def).unwrap_or_default());
+                    }
+                    if resolved_model.is_none() {
+                        resolved_model = role_def.default_model;
+                    }
+                    if resolved_provider.is_none() {
+                        resolved_provider = role_def.default_provider;
+                    }
+                    if resolved_soul.is_none() {
+                        resolved_soul = role_def.soul;
+                    }
+                    if resolved_max_depth.is_none() {
+                        resolved_max_depth = Some(role_def.max_depth);
+                    }
+                    if resolved_max_children.is_none() {
+                        resolved_max_children = Some(role_def.max_children);
+                    }
+                    resolved_role_name = Some(role_def.role.unwrap_or(rn.clone()));
+                }
+            }
+
+            let req = SpawnRequest {
+                task,
+                role: resolved_role_name,
+                soul: resolved_soul,
+                model: resolved_model,
+                provider: resolved_provider,
+                depth,
+                max_depth: resolved_max_depth,
+                max_children: resolved_max_children,
+                timeout_sec: timeout,
+                system_prompt: sys_prompt,
+                parent_id: parent,
+            };
+
+            match manager.spawn(req).await {
+                Ok(resp) => {
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        println!("Agent started with id {}", resp.id);
+                        if let Some(ref s) = resp.soul {
+                            println!("Soul: {s}");
+                        }
+                        if let Some(ref r) = resp.role {
+                            println!("Role: {r}");
+                        }
+                        println!("Model: {}", resp.model);
+                        println!("Provider: {}", resp.provider);
+                    }
+                    0
+                }
+                Err(e) => {
+                    if json_output {
+                        println!("{}", json!({"error": e.to_string()}));
+                    } else {
+                        eprintln!("Error: {e}");
+                    }
+                    if e.to_string().contains("quota") || e.to_string().contains("exceeded") {
+                        10
+                    } else {
+                        1
+                    }
+                }
+            }
+        }
+
+        Commands::Status { id } => match manager.get_status(id).await {
+            Ok(info) => {
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&info)?);
+                } else {
+                    println!("Agent {}: {}", info.id, info.status);
+                    if let Some(ref phase) = info.phase {
+                        println!("Phase: {phase}");
+                    }
+                    println!("Progress: {:.0}%", info.progress * 100.0);
+                    println!("Model: {}", info.model);
+                    println!("Provider: {}", info.provider);
+                    if let Some(remaining) = info.timeout_remaining_sec {
+                        println!("Timeout remaining: {remaining}s");
+                    }
+                }
+                0
+            }
+            Err(e) => {
+                if json_output {
+                    println!("{}", json!({"error": e.to_string()}));
+                } else {
+                    eprintln!("Error: {e}");
+                }
+                1
+            }
+        },
+
+        Commands::Agent(AgentCommands::Steer {
+            id,
+            instruction,
+            prompt_patch,
+        }) => {
+            let req = SteerRequest {
+                instruction,
+                prompt_patch,
+            };
+            match manager.steer(id, req).await {
+                Ok(resp) => {
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        println!("Steered agent {}", resp.id);
+                        if resp.instruction_appended {
+                            println!("Instruction appended");
+                        }
+                        if resp.system_prompt_patched {
+                            println!(
+                                "System prompt patched (delta: {} tokens)",
+                                resp.patch_size_delta_tokens
+                            );
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    if json_output {
+                        println!("{}", json!({"error": e.to_string()}));
+                    } else {
+                        eprintln!("Error: {e}");
+                    }
+                    1
+                }
+            }
+        }
+
+        Commands::Agent(AgentCommands::Kill { id, all }) => {
+            if all {
+                match manager.kill_all().await {
+                    Ok(count) => {
+                        if json_output {
+                            println!("{}", json!({"killed_count": count}));
+                        } else {
+                            println!("Killed {count} agents");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        1
+                    }
+                }
+            } else if let Some(id) = id {
+                match manager.kill(id).await {
+                    Ok(()) => {
+                        if json_output {
+                            println!("{}", json!({"killed": id}));
+                        } else {
+                            println!("Killed agent {id}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        if json_output {
+                            println!("{}", json!({"error": e.to_string()}));
+                        } else {
+                            eprintln!("Error: {e}");
+                        }
+                        1
+                    }
+                }
+            } else {
+                eprintln!("Error: provide an agent ID or --all");
+                2
+            }
+        }
+
+        Commands::Agent(AgentCommands::Pause { id }) => match manager.pause(id).await {
+            Ok(()) => {
+                if json_output {
+                    println!("{}", json!({"paused": id}));
+                } else {
+                    println!("Paused agent {id}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+
+        Commands::Agent(AgentCommands::Resume { id }) => match manager.resume(id).await {
+            Ok(()) => {
+                if json_output {
+                    println!("{}", json!({"resumed": id}));
+                } else {
+                    println!("Resumed agent {id}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+
+        Commands::Agents { cmd } => match cmd {
+            AgentsCommands::List { soul, role } => {
+                match manager
+                    .list_agents(soul.as_deref(), role.as_deref())
+                    .await
+                {
+                    Ok(agents) => {
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&agents)?);
+                        } else if agents.is_empty() {
+                            println!("No agents running");
+                        } else {
+                            println!(
+                                "{:<5} {:<12} {:<20} {:<15} {:<10}",
+                                "ID", "STATUS", "SOUL", "ROLE", "MODEL"
+                            );
+                            println!("{}", "-".repeat(62));
+                            for a in &agents {
+                                println!(
+                                    "{:<5} {:<12} {:<20} {:<15} {:<10}",
+                                    a.id,
+                                    a.status.to_string(),
+                                    a.soul.as_deref().unwrap_or("-"),
+                                    a.role.as_deref().unwrap_or("-"),
+                                    &a.model,
+                                );
+                            }
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        1
+                    }
+                }
+            }
+            AgentsCommands::Show { id } => match manager.get_status(id).await {
+                Ok(info) => {
+                    println!("{}", serde_json::to_string_pretty(&info)?);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    1
+                }
+            },
+        },
+
+        Commands::Role(role_cmd) => handle_role_command(role_cmd, json_output)?,
+
+        Commands::Provider(prov_cmd) => {
+            handle_provider_command(prov_cmd, &config, &manager, json_output).await?
+        }
+
+        Commands::Server {
+            bind,
+            tls_cert: _,
+            tls_key: _,
+        } => {
+            let mut server_config = config.clone();
+            if let Some(b) = bind {
+                server_config.server.bind = b;
+            }
+            server::run_server(&server_config, manager).await?;
+            0
+        }
+
+        Commands::Logs { id, since } => {
+            if let Some(agent_id) = id {
+                match logging::read_agent_log(agent_id)? {
+                    Some(log) => {
+                        if json_output {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&log) {
+                                println!("{}", serde_json::to_string_pretty(&val)?);
+                            } else {
+                                println!("{}", json!({"log": log}));
+                            }
+                        } else {
+                            println!("{log}");
+                        }
+                    }
+                    None => {
+                        println!("No logs found for agent {agent_id}");
+                    }
+                }
+            } else {
+                let since_str = since.as_deref().unwrap_or("10m");
+                let logs = logging::read_logs_since(since_str)?;
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&logs)?);
+                } else if logs.is_empty() {
+                    println!("No logs found since {since_str}");
+                } else {
+                    for log in &logs {
+                        println!("{}", serde_json::to_string_pretty(log)?);
+                        println!("---");
+                    }
+                }
+            }
+            0
+        }
+
+        Commands::Diagnose => {
+            let agents = manager.list_agents(None, None).await?;
+            let providers = manager.get_providers().await;
+
+            if json_output {
+                let mut provider_health = serde_json::Map::new();
+                for p in &providers {
+                    let status = manager
+                        .check_provider(p)
+                        .await
+                        .unwrap_or_else(|e| e.to_string());
+                    provider_health.insert(p.clone(), json!(status));
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "agents": agents,
+                        "providers": provider_health,
+                        "agent_count": agents.len(),
+                    }))?
+                );
+            } else {
+                println!("=== MCP Diagnostics ===\n");
+                println!("Agents: {} total", agents.len());
+                let running = agents
+                    .iter()
+                    .filter(|a| a.status == agent::AgentStatus::Running)
+                    .count();
+                println!("  Running: {running}");
+                let completed = agents
+                    .iter()
+                    .filter(|a| a.status == agent::AgentStatus::Completed)
+                    .count();
+                println!("  Completed: {completed}");
+                let failed = agents
+                    .iter()
+                    .filter(|a| a.status == agent::AgentStatus::Failed)
+                    .count();
+                println!("  Failed: {failed}");
+
+                println!("\nProviders:");
+                for p in &providers {
+                    let status = manager
+                        .check_provider(p)
+                        .await
+                        .unwrap_or_else(|e| format!("error: {e}"));
+                    println!("  {p}: {status}");
+                }
+            }
+            0
+        }
+    };
+
+    std::process::exit(exit_code);
+}
+
+fn handle_role_command(cmd: RoleCommands, json_output: bool) -> Result<i32> {
+    match cmd {
+        RoleCommands::Create {
+            name,
+            from,
+            prompt,
+            role: role_tag,
+            soul,
+            model,
+            provider,
+        } => {
+            let system_prompt = if let Some(ref file) = from {
+                Some(std::fs::read_to_string(file)?)
+            } else {
+                prompt
+            };
+
+            let role_def = RoleDefinition {
+                name: name.clone(),
+                soul,
+                role: role_tag,
+                prompt_file: from,
+                system_prompt,
+                default_model: model,
+                default_provider: provider,
+                max_depth: 2,
+                max_children: 5,
+                allowed_tools: vec![],
+            };
+
+            role::create_role(&role_def)?;
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&role_def)?);
+            } else {
+                println!("Role '{}' created", role_def.name);
+            }
+            Ok(0)
+        }
+
+        RoleCommands::List => {
+            let roles = role::list_roles()?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&roles)?);
+            } else if roles.is_empty() {
+                println!("No roles defined");
+            } else {
+                println!("{:<15} {:<20} {:<15}", "NAME", "SOUL", "ROLE");
+                println!("{}", "-".repeat(50));
+                for r in &roles {
+                    println!(
+                        "{:<15} {:<20} {:<15}",
+                        r.name,
+                        r.soul.as_deref().unwrap_or("-"),
+                        r.role.as_deref().unwrap_or("-"),
+                    );
+                }
+            }
+            Ok(0)
+        }
+
+        RoleCommands::Show { name } => {
+            let role_def = role::get_role(&name)?;
+            println!("{}", serde_json::to_string_pretty(&role_def)?);
+            Ok(0)
+        }
+
+        RoleCommands::Delete { name } => {
+            role::delete_role(&name)?;
+            if json_output {
+                println!("{}", json!({"deleted": name}));
+            } else {
+                println!("Role '{name}' deleted");
+            }
+            Ok(0)
+        }
+
+        RoleCommands::Patch {
+            name,
+            prompt_patch,
+            model,
+            provider,
+        } => {
+            let updated = role::patch_role(
+                &name,
+                prompt_patch.as_deref(),
+                model.as_deref(),
+                provider.as_deref(),
+            )?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&updated)?);
+            } else {
+                println!("Role '{name}' updated");
+            }
+            Ok(0)
+        }
+    }
+}
+
+async fn handle_provider_command(
+    cmd: ProviderCommands,
+    config: &config::McpConfig,
+    manager: &AgentManager,
+    json_output: bool,
+) -> Result<i32> {
+    match cmd {
+        ProviderCommands::List => {
+            let providers = manager.get_providers().await;
+            if json_output {
+                let entries: Vec<_> = providers
+                    .iter()
+                    .filter_map(|name| {
+                        config.provider.get(name).map(|e| {
+                            json!({
+                                "name": name,
+                                "type": e.provider_type,
+                                "url": e.url,
+                                "model": e.model,
+                            })
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if providers.is_empty() {
+                println!("No providers configured");
+            } else {
+                println!("{:<20} {:<15} {:<40}", "NAME", "TYPE", "URL");
+                println!("{}", "-".repeat(75));
+                for name in &providers {
+                    if let Some(entry) = config.provider.get(name) {
+                        println!(
+                            "{:<20} {:<15} {:<40}",
+                            name,
+                            entry.provider_type,
+                            entry.url.as_deref().unwrap_or("-"),
+                        );
+                    }
+                }
+            }
+            Ok(0)
+        }
+
+        ProviderCommands::Show { name, show_secrets } => {
+            if let Some(entry) = config.provider.get(&name) {
+                let mut val = json!({
+                    "name": name,
+                    "type": entry.provider_type,
+                    "url": entry.url,
+                    "model": entry.model,
+                    "timeout": entry.timeout,
+                    "max_retries": entry.max_retries,
+                });
+                if show_secrets {
+                    val["api_key"] = json!(entry.resolved_api_key());
+                } else {
+                    val["api_key"] = json!("***REDACTED***");
+                }
+                println!("{}", serde_json::to_string_pretty(&val)?);
+            } else {
+                eprintln!("Provider '{name}' not found");
+                return Ok(1);
+            }
+            Ok(0)
+        }
+
+        ProviderCommands::Check { name } => match manager.check_provider(&name).await {
+            Ok(msg) => {
+                if json_output {
+                    println!("{}", json!({"provider": name, "status": msg}));
+                } else {
+                    println!("{msg}");
+                }
+                Ok(0)
+            }
+            Err(e) => {
+                if json_output {
+                    println!("{}", json!({"provider": name, "error": e.to_string()}));
+                } else {
+                    eprintln!("Error: {e}");
+                }
+                Ok(1)
+            }
+        },
+    }
+}
