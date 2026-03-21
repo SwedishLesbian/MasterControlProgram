@@ -5,6 +5,8 @@ mod logging;
 mod provider;
 mod role;
 mod server;
+mod tool;
+mod workflow;
 
 use anyhow::Result;
 use clap::Parser;
@@ -26,6 +28,7 @@ async fn main() -> Result<()> {
     let json_output = cli.json || config.cli.json_output;
 
     let manager = Arc::new(AgentManager::new(&config)?);
+    let workflow_runner = Arc::new(workflow::WorkflowRunner::new());
 
     let exit_code = match cli.command {
         Commands::Spawn {
@@ -308,6 +311,12 @@ async fn main() -> Result<()> {
 
         Commands::Role(role_cmd) => handle_role_command(role_cmd, json_output)?,
 
+        Commands::Tool(tool_cmd) => handle_tool_command(tool_cmd, json_output)?,
+
+        Commands::Workflow(wf_cmd) => {
+            handle_workflow_command(wf_cmd, &manager, &workflow_runner, json_output).await?
+        }
+
         Commands::Provider(prov_cmd) => {
             handle_provider_command(prov_cmd, &config, &manager, json_output).await?
         }
@@ -321,7 +330,7 @@ async fn main() -> Result<()> {
             if let Some(b) = bind {
                 server_config.server.bind = b;
             }
-            server::run_server(&server_config, manager).await?;
+            server::run_server(&server_config, manager, workflow_runner).await?;
             0
         }
 
@@ -647,5 +656,219 @@ async fn handle_provider_command(
                 Ok(1)
             }
         },
+    }
+}
+
+fn handle_tool_command(cmd: cli::ToolCommands, json_output: bool) -> Result<i32> {
+    use cli::ToolCommands;
+    match cmd {
+        ToolCommands::Register {
+            name,
+            role,
+            workflow: wf_path,
+            description: _desc,
+        } => {
+            let tool_def = if let Some(role_name) = role {
+                tool::register_from_role(&name, &role_name)?
+            } else if let Some(wf) = wf_path {
+                tool::register_from_workflow(&name, &wf)?
+            } else {
+                anyhow::bail!("Provide --role or --workflow to bind the tool");
+            };
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&tool_def)?);
+            } else {
+                println!("Tool '{}' registered", tool_def.name);
+                if let Some(ref r) = tool_def.role_binding {
+                    println!("  Bound to role: {r}");
+                }
+                if let Some(ref w) = tool_def.workflow_binding {
+                    println!("  Bound to workflow: {w}");
+                }
+            }
+            Ok(0)
+        }
+
+        ToolCommands::List => {
+            let tools = tool::list_tools()?;
+            if json_output {
+                let entries: Vec<tool::ToolListEntry> = tools.iter().map(|t| t.into()).collect();
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if tools.is_empty() {
+                println!("No tools registered");
+            } else {
+                println!(
+                    "{:<20} {:<30} {:<15} {:<15}",
+                    "NAME", "DESCRIPTION", "ROLE", "WORKFLOW"
+                );
+                println!("{}", "-".repeat(80));
+                for t in &tools {
+                    let desc = if t.description.len() > 28 {
+                        format!("{}…", &t.description[..27])
+                    } else {
+                        t.description.clone()
+                    };
+                    println!(
+                        "{:<20} {:<30} {:<15} {:<15}",
+                        t.name,
+                        desc,
+                        t.role_binding.as_deref().unwrap_or("-"),
+                        t.workflow_binding.as_deref().unwrap_or("-"),
+                    );
+                }
+            }
+            Ok(0)
+        }
+
+        ToolCommands::Show { name } => {
+            let t = tool::get_tool(&name)?;
+            println!("{}", serde_json::to_string_pretty(&t)?);
+            Ok(0)
+        }
+
+        ToolCommands::Delete { name } => {
+            tool::delete_tool(&name)?;
+            if json_output {
+                println!("{}", json!({"deleted": name}));
+            } else {
+                println!("Tool '{name}' deleted");
+            }
+            Ok(0)
+        }
+    }
+}
+
+async fn handle_workflow_command(
+    cmd: cli::WorkflowCommands,
+    manager: &Arc<AgentManager>,
+    runner: &Arc<workflow::WorkflowRunner>,
+    json_output: bool,
+) -> Result<i32> {
+    use cli::WorkflowCommands;
+    match cmd {
+        WorkflowCommands::Run { name } => {
+            let wf = workflow::load_workflow(&name)?;
+            let run_id = runner.run(wf.clone(), manager.clone()).await?;
+            if json_output {
+                println!(
+                    "{}",
+                    json!({"run_id": run_id, "workflow": wf.name, "status": "running"})
+                );
+            } else {
+                println!("Workflow '{}' started (run ID: {run_id})", wf.name);
+            }
+            Ok(0)
+        }
+
+        WorkflowCommands::List => {
+            let workflows = workflow::list_workflows()?;
+            if json_output {
+                let entries: Vec<serde_json::Value> = workflows
+                    .iter()
+                    .map(|w| {
+                        json!({
+                            "name": w.name,
+                            "version": w.version,
+                            "description": w.description,
+                            "steps": w.steps.len(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if workflows.is_empty() {
+                println!("No workflows found");
+            } else {
+                println!("{:<25} {:<8} {:<6} {}", "NAME", "VERSION", "STEPS", "DESCRIPTION");
+                println!("{}", "-".repeat(70));
+                for w in &workflows {
+                    println!(
+                        "{:<25} {:<8} {:<6} {}",
+                        w.name,
+                        w.version,
+                        w.steps.len(),
+                        w.description,
+                    );
+                }
+            }
+            Ok(0)
+        }
+
+        WorkflowCommands::Show { name } => {
+            let wf = workflow::load_workflow(&name)?;
+            println!("{}", serde_json::to_string_pretty(&wf)?);
+            Ok(0)
+        }
+
+        WorkflowCommands::Status { id } => {
+            let info = runner.get_run(id).await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("Workflow run {}: {}", info.run_id, info.status);
+                println!("Workflow: {}", info.workflow_name);
+                if let Some(ref step) = info.current_step {
+                    println!("Current step: {step}");
+                }
+                println!("Steps completed: {}", info.step_results.len());
+                for r in &info.step_results {
+                    let status_marker = if r.status == "ok" { "✓" } else { "✗" };
+                    println!("  {status_marker} {} ({})", r.step_id, r.action);
+                    if let Some(ref e) = r.error {
+                        println!("    Error: {e}");
+                    }
+                }
+            }
+            Ok(0)
+        }
+
+        WorkflowCommands::Stop { id } => {
+            runner.stop(id).await?;
+            if json_output {
+                println!("{}", json!({"stopped": id}));
+            } else {
+                println!("Stopped workflow run {id}");
+            }
+            Ok(0)
+        }
+
+        WorkflowCommands::Validate { file } => {
+            let text = std::fs::read_to_string(&file)?;
+            match workflow::parse_workflow_yaml(&text) {
+                Ok(wf) => match workflow::validate_workflow(&wf) {
+                    Ok(()) => {
+                        if json_output {
+                            println!(
+                                "{}",
+                                json!({"valid": true, "name": wf.name, "steps": wf.steps.len()})
+                            );
+                        } else {
+                            println!(
+                                "Workflow '{}' is valid ({} steps)",
+                                wf.name,
+                                wf.steps.len()
+                            );
+                        }
+                        Ok(0)
+                    }
+                    Err(e) => {
+                        if json_output {
+                            println!("{}", json!({"valid": false, "error": e.to_string()}));
+                        } else {
+                            eprintln!("Validation error: {e}");
+                        }
+                        Ok(1)
+                    }
+                },
+                Err(e) => {
+                    if json_output {
+                        println!("{}", json!({"valid": false, "error": e.to_string()}));
+                    } else {
+                        eprintln!("Parse error: {e}");
+                    }
+                    Ok(1)
+                }
+            }
+        }
     }
 }

@@ -199,7 +199,7 @@ fn merge_config(base: &mut McpConfig, overlay: McpConfig) {
 /// Ensure the MCP home directory and subdirectories exist.
 pub fn ensure_dirs() -> Result<()> {
     let home = mcp_home();
-    for sub in &["roles", "logs"] {
+    for sub in &["roles", "logs", "tools", "workflows"] {
         std::fs::create_dir_all(home.join(sub))?;
     }
     Ok(())

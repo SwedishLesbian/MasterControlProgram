@@ -109,6 +109,8 @@ Commands:
   agent       Agent management (steer, kill, pause, resume)
   agents      List / show agents
   role        Role management (create, list, show, delete, patch)
+  tool        Tool registry (register, list, show, delete)
+  workflow    Workflow engine (run, list, show, status, stop, validate)
   provider    Provider management (list, show, check)
   server      Run as HTTP server
   logs        View agent logs
@@ -141,6 +143,76 @@ MasterControlProgram role create coder --from=coder.soul.md --soul=rust-native-e
 MasterControlProgram spawn --role=coder "Build a REST API"
 ```
 
+## Tool Registry (v0.1.2+)
+
+Register agents as discoverable tools with input/output schemas:
+
+```bash
+# Register a role-bound tool
+MasterControlProgram tool register coder_agent --role=coder
+
+# Register a workflow-bound tool
+MasterControlProgram tool register build_pipeline --workflow=build.yaml
+
+# List / show / delete
+MasterControlProgram tool list --json
+MasterControlProgram tool show coder_agent
+MasterControlProgram tool delete coder_agent
+```
+
+Tools are discoverable via the server at `GET /tools` and included in `GET /mcp-tools`.
+
+## Workflow Engine (v0.1.2+)
+
+Define multi-step YAML workflows in `~/.mcp/workflows/`:
+
+```yaml
+name: build_and_test
+version: 1
+description: Build code, then test it
+globals:
+  max_depth: 2
+  default_role: coder
+
+steps:
+  - id: code
+    action: spawn
+    role: coder
+    task: "Write a REST API in Rust"
+
+  - id: wait_code
+    action: wait
+    agent: code
+
+  - id: steer_code
+    action: steer
+    agent: code
+    instruction: "Add error handling"
+
+  - id: test
+    action: spawn
+    role: tester
+    task: "Write tests for the REST API"
+
+  - id: wait_test
+    action: wait
+    agent: test
+
+  - id: summary
+    action: summarize
+    source: [code, test]
+```
+
+**Supported actions:** `spawn`, `wait`, `steer`, `kill`, `pause`, `resume`, `inspect`, `summarize`
+
+```bash
+MasterControlProgram workflow run build_and_test.yaml
+MasterControlProgram workflow status 1
+MasterControlProgram workflow stop 1
+MasterControlProgram workflow list
+MasterControlProgram workflow validate build_and_test.yaml
+```
+
 ## Server mode
 
 ```bash
@@ -160,6 +232,13 @@ Exposes REST endpoints:
 | GET | `/agents` | List all agents |
 | GET | `/providers` | List providers |
 | GET | `/providers/{name}/check` | Provider health |
+| GET | `/tools` | List registered tools |
+| GET | `/tools/{name}` | Get tool details |
+| GET | `/workflows` | List workflows |
+| GET | `/workflows/{name}` | Get workflow details |
+| POST | `/workflows/run` | Execute a workflow |
+| GET | `/workflow-runs/{id}` | Workflow run status |
+| POST | `/workflow-runs/{id}/stop` | Stop workflow run |
 | GET | `/mcp-tools` | MCP-style tool discovery |
 
 ## Provider configuration

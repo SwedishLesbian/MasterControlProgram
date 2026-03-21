@@ -83,6 +83,14 @@ pub enum Commands {
     #[command(subcommand)]
     Provider(ProviderCommands),
 
+    /// Tool registry management
+    #[command(subcommand)]
+    Tool(ToolCommands),
+
+    /// Workflow management
+    #[command(subcommand)]
+    Workflow(WorkflowCommands),
+
     /// Run as HTTP server
     Server {
         /// Bind address
@@ -240,6 +248,78 @@ pub enum RoleCommands {
         /// Set provider
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ToolCommands {
+    /// Register a new tool
+    Register {
+        /// Tool name
+        name: String,
+
+        /// Bind to a role
+        #[arg(long)]
+        role: Option<String>,
+
+        /// Bind to a workflow file
+        #[arg(long)]
+        workflow: Option<String>,
+
+        /// Tool description
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// List all registered tools
+    List,
+
+    /// Show tool details
+    Show {
+        /// Tool name
+        name: String,
+    },
+
+    /// Delete a tool
+    Delete {
+        /// Tool name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkflowCommands {
+    /// Run a workflow
+    Run {
+        /// Workflow file path or name
+        name: String,
+    },
+
+    /// List saved workflows
+    List,
+
+    /// Show workflow details
+    Show {
+        /// Workflow name
+        name: String,
+    },
+
+    /// Get status of a workflow run
+    Status {
+        /// Workflow run ID
+        id: u64,
+    },
+
+    /// Stop a running workflow
+    Stop {
+        /// Workflow run ID
+        id: u64,
+    },
+
+    /// Validate a workflow file
+    Validate {
+        /// Workflow file path
+        file: String,
     },
 }
 

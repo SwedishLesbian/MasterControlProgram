@@ -1,6 +1,6 @@
 [package]
 name = "mcp"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Master Control Program – CLI-first agent-orchestration system"
 license = "MIT"
@@ -23,6 +23,7 @@ tokio = { version = "1", features = ["full"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 toml = "0.8"
 
 # HTTP client (provider calls)
@@ -49,6 +50,7 @@ async-trait = "0.1"
 # AWS SDK for Bedrock
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-bedrockruntime = "1"
+tempfile = "3"
 
 [profile.release]
 opt-level = "z"
