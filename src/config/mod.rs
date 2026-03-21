@@ -21,6 +21,12 @@ pub struct McpConfig {
 pub struct DefaultConfig {
     pub provider: String,
     pub model: String,
+    /// Default role to use when spawning agents without --role.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Default tool name registered for discovery.
+    #[serde(default)]
+    pub tool: Option<String>,
 }
 
 impl Default for DefaultConfig {
@@ -28,6 +34,8 @@ impl Default for DefaultConfig {
         Self {
             provider: "openai".into(),
             model: "gpt-4o".into(),
+            role: None,
+            tool: None,
         }
     }
 }

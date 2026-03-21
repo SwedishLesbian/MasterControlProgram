@@ -1,0 +1,31 @@
+{
+  "name": "read-file",
+  "description": "Read the contents of a file at a given path. Returns the full text content of the file.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file to read"
+      }
+    },
+    "required": ["path"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The resolved path that was read"
+      },
+      "contents": {
+        "type": "string",
+        "description": "The text contents of the file"
+      },
+      "size_bytes": {
+        "type": "integer",
+        "description": "File size in bytes"
+      }
+    }
+  }
+}

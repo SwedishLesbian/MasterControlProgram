@@ -1,0 +1,43 @@
+{
+  "name": "edit-file",
+  "description": "Apply a targeted edit to an existing file using a search-and-replace diff. Safer than write-file for partial changes.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file to edit"
+      },
+      "diff": {
+        "type": "string",
+        "description": "The exact text to find and replace, in unified diff format or as a search→replace pair"
+      },
+      "search": {
+        "type": "string",
+        "description": "The exact string to search for in the file (alternative to diff)"
+      },
+      "replace": {
+        "type": "string",
+        "description": "The string to replace the search match with (used with search)"
+      }
+    },
+    "required": ["path"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The resolved path that was edited"
+      },
+      "replacements": {
+        "type": "integer",
+        "description": "Number of replacements made"
+      },
+      "size_delta": {
+        "type": "integer",
+        "description": "Change in file size (bytes)"
+      }
+    }
+  }
+}

@@ -56,22 +56,57 @@ fn tools_dir() -> PathBuf {
 }
 
 /// Register a new tool from a role binding.
+///
+/// If the role has `allowed_tools`, they are included in the schema
+/// so discovering agents can see what sub-capabilities the tool exposes.
 pub fn register_from_role(name: &str, role_name: &str) -> Result<ToolDefinition> {
     let role = crate::role::get_role(role_name)
         .with_context(|| format!("Role '{role_name}' not found — cannot bind tool"))?;
 
     let description = format!(
-        "Spawn or invoke a {} agent (role: {}).",
+        "Spawn or invoke a {} agent (role: {}). {}",
         role.soul.as_deref().unwrap_or(role_name),
         role.role.as_deref().unwrap_or("general"),
+        if !role.allowed_tools.is_empty() {
+            format!("Available sub-tools: {}", role.allowed_tools.join(", "))
+        } else {
+            String::new()
+        },
     );
+
+    // Build input schema — include sub-tool schemas from examples/ if available
+    let mut properties = serde_json::json!({
+        "task": { "type": "string", "description": "Task to perform" },
+        "constraints": { "type": "string", "description": "Additional constraints" }
+    });
+
+    if !role.allowed_tools.is_empty() {
+        properties["allowed_tools"] = serde_json::json!({
+            "type": "array",
+            "items": { "type": "string", "enum": role.allowed_tools },
+            "description": "Subset of tools this invocation may use"
+        });
+
+        // Try to load sub-tool schemas from ~/.mcp/tools/ for richer discovery
+        let mut sub_tools = Vec::new();
+        for tool_name in &role.allowed_tools {
+            let schema_path = crate::config::mcp_home()
+                .join("tools")
+                .join(format!("{tool_name}.json"));
+            if let Ok(text) = std::fs::read_to_string(&schema_path) {
+                if let Ok(schema) = serde_json::from_str::<serde_json::Value>(&text) {
+                    sub_tools.push(schema);
+                }
+            }
+        }
+        if !sub_tools.is_empty() {
+            properties["_sub_tool_schemas"] = serde_json::json!(sub_tools);
+        }
+    }
 
     let input_schema = serde_json::json!({
         "type": "object",
-        "properties": {
-            "task": { "type": "string", "description": "Task to perform" },
-            "constraints": { "type": "string", "description": "Additional constraints" }
-        },
+        "properties": properties,
         "required": ["task"]
     });
 

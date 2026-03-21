@@ -1,0 +1,39 @@
+{
+  "name": "write-file",
+  "description": "Write contents to a file. Creates the file if it does not exist, or overwrites if it does. Use edit-file for partial changes.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file to write"
+      },
+      "contents": {
+        "type": "string",
+        "description": "The full text content to write to the file"
+      },
+      "create_dirs": {
+        "type": "boolean",
+        "description": "If true, create parent directories if they don't exist (default: false)"
+      }
+    },
+    "required": ["path", "contents"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The resolved path that was written"
+      },
+      "size_bytes": {
+        "type": "integer",
+        "description": "Number of bytes written"
+      },
+      "created": {
+        "type": "boolean",
+        "description": "True if the file was newly created, false if overwritten"
+      }
+    }
+  }
+}

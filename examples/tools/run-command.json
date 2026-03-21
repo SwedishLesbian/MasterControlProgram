@@ -1,0 +1,43 @@
+{
+  "name": "run-command",
+  "description": "Run a shell command and return its output. Commands run in a subprocess with a timeout. Destructive commands require explicit user confirmation.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "The shell command to execute"
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Working directory for the command (default: current directory)"
+      },
+      "timeout_sec": {
+        "type": "integer",
+        "description": "Maximum execution time in seconds (default: 30)"
+      }
+    },
+    "required": ["command"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "stdout": {
+        "type": "string",
+        "description": "Standard output from the command"
+      },
+      "stderr": {
+        "type": "string",
+        "description": "Standard error from the command"
+      },
+      "exit_code": {
+        "type": "integer",
+        "description": "Exit code of the command (0 = success)"
+      },
+      "timed_out": {
+        "type": "boolean",
+        "description": "True if the command exceeded the timeout"
+      }
+    }
+  }
+}

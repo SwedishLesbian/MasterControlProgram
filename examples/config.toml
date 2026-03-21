@@ -1,0 +1,44 @@
+# MasterControlProgram — recommended config for local tool usage
+#
+# Copy this to ~/.mcp/config.toml and adjust as needed.
+
+[default]
+provider = "nvidia-nim"
+model = "nvidia/llama-3.1-70b-instruct"
+# Default role used when `mcp spawn` doesn't specify --role
+role = "local_coder"
+# Default tool exposed to other agents
+tool = "coder_agent"
+
+[server]
+enabled = true
+bind = "127.0.0.1:29999"
+
+[limits]
+max_concurrent_agents = 8
+max_depth = 2
+max_children_per_parent = 5
+agent_timeout_sec = 600
+
+[cli]
+json_output = false
+
+[provider.nvidia-nim]
+type = "nvidia-nim"
+url = "https://integrate.api.nvidia.com/v1"
+model = "nvidia/llama-3.1-70b-instruct"
+api_key = "<env:MCP_NVIDIA_NIM_KEY>"
+timeout = 120
+max_retries = 2
+
+# Uncomment and configure additional providers as needed:
+#
+# [provider.openai]
+# type = "openai"
+# url = "https://api.openai.com/v1"
+# api_key = "<env:OPENAI_API_KEY>"
+#
+# [provider.anthropic]
+# type = "anthropic"
+# url = "https://api.anthropic.com/v1"
+# api_key = "<env:ANTHROPIC_API_KEY>"

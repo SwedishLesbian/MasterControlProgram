@@ -44,16 +44,17 @@ async fn main() -> Result<()> {
             system_prompt,
             parent,
         } => {
-            // Resolve role if specified
+            // Resolve role: use --role flag, or fall back to config default
+            let effective_role_name = role_name.or_else(|| config.default.role.clone());
             let mut sys_prompt = system_prompt;
             let mut resolved_model = model;
             let mut resolved_provider = provider;
             let mut resolved_soul = soul;
             let mut resolved_max_depth = max_depth;
             let mut resolved_max_children = max_children;
-            let mut resolved_role_name = role_name.clone();
+            let mut resolved_role_name = effective_role_name.clone();
 
-            if let Some(ref rn) = role_name {
+            if let Some(ref rn) = effective_role_name {
                 if let Ok(role_def) = role::get_role(rn) {
                     if sys_prompt.is_none() {
                         sys_prompt =
@@ -590,6 +591,14 @@ async fn handle_config_command(
             } else {
                 println!("Default provider: {}", config.default.provider);
                 println!("Default model:    {}", config.default.model);
+                println!(
+                    "Default role:     {}",
+                    config.default.role.as_deref().unwrap_or("(none)")
+                );
+                println!(
+                    "Default tool:     {}",
+                    config.default.tool.as_deref().unwrap_or("(none)")
+                );
                 println!();
                 println!("Server bind:      {}", config.server.bind);
                 println!("Server enabled:   {}", config.server.enabled);

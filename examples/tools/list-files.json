@@ -1,0 +1,47 @@
+{
+  "name": "list-files",
+  "description": "List files and directories at a given path. Returns names, types, and sizes. Non-recursive by default.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Directory path to list (default: current directory)"
+      },
+      "recursive": {
+        "type": "boolean",
+        "description": "If true, list recursively (default: false)"
+      },
+      "pattern": {
+        "type": "string",
+        "description": "Glob pattern to filter results (e.g. '*.rs', '**/*.toml')"
+      }
+    },
+    "required": ["path"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The directory that was listed"
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "type": { "type": "string", "enum": ["file", "directory", "symlink"] },
+            "size_bytes": { "type": "integer" }
+          }
+        },
+        "description": "List of directory entries"
+      },
+      "total": {
+        "type": "integer",
+        "description": "Total number of entries returned"
+      }
+    }
+  }
+}

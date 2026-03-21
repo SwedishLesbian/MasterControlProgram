@@ -22,6 +22,7 @@
 - **Constraint enforcement** — `maxDepth`, `maxChildren`, `maxConcurrentAgents`, per-agent timeouts
 - **HTTP server mode** — REST API for agent orchestration, usable as a control plane by other agents
 - **JSON-first** — every command supports `--json` for machine-readable output; fully scriptable and non-interactive
+- **Local tools** — built-in role for safe file read/write/edit, directory listing, and shell commands
 - **Cross-platform** — identical CLI, config, and behavior on Linux and Windows
 
 ## Installation
@@ -226,6 +227,72 @@ mcp workflow stop 1
 mcp workflow list
 mcp workflow validate build_and_test.yaml
 ```
+
+## Getting Started with Local Tools
+
+MCP ships with a recommended `local_coder` role and tool schemas that let agents read, write, edit, and organize files on your machine — safely by default.
+
+### 1. Copy the role and config
+
+```bash
+# Copy the example role into your MCP roles directory
+cp examples/roles/local_coder.toml ~/.mcp/roles/
+
+# Optionally copy the recommended config
+cp examples/config.toml ~/.mcp/config.toml
+```
+
+### 2. Set your API key
+
+```bash
+export MCP_NVIDIA_NIM_KEY="nvapi-..."
+```
+
+### 3. Register the tool
+
+```bash
+mcp tool register coder_agent --role=local_coder
+```
+
+After this, `coder_agent` appears in `mcp tool list` and in `GET /mcp-tools` discovery, so other agents can find and invoke it.
+
+### 4. Spawn a local agent
+
+```bash
+mcp spawn "Organize the files in ~/projects/myapp into a clean directory structure"
+```
+
+The agent uses the `local_coder` role by default (if configured in `config.toml`), which means:
+- It can **read**, **write**, **edit** files and **run commands**
+- It will **never delete or rename** files without explicit confirmation
+- It **prefers read-only** operations when unsure
+- All actions are logged to `~/.mcp/logs/` for auditing
+
+### 5. Available sub-tools
+
+The `local_coder` role exposes these tools to the agent:
+
+| Tool | Description | Input |
+|------|-------------|-------|
+| `read-file` | Read file contents | `{ "path": "string" }` |
+| `write-file` | Create or overwrite a file | `{ "path": "string", "contents": "string" }` |
+| `edit-file` | Apply a targeted search/replace edit | `{ "path": "string", "search": "string", "replace": "string" }` |
+| `list-files` | List directory contents | `{ "path": "string", "recursive": false }` |
+| `run-command` | Run a shell command | `{ "command": "string", "cwd": "string" }` |
+
+Full JSON schemas for each tool are in [`examples/tools/`](examples/tools/).
+
+### Recommended config
+
+```toml
+[default]
+provider = "nvidia-nim"
+model = "nvidia/llama-3.1-70b-instruct"
+role = "local_coder"      # default role for mcp spawn
+tool = "coder_agent"      # default tool for discovery
+```
+
+When `role` is set in `[default]`, every `mcp spawn` that doesn't specify `--role` will automatically use `local_coder`. Workflow steps without an explicit role also fall back to this default.
 
 ## Server mode
 
