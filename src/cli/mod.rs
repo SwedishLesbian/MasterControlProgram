@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "mcp", about = "Master Control Program – agent orchestration CLI")]
+#[command(name = "MasterControlProgram", about = "Master Control Program – agent orchestration CLI")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -110,6 +110,13 @@ pub enum Commands {
 
     /// System diagnostics
     Diagnose,
+
+    /// Create a shell alias (e.g., 'mcp') for MasterControlProgram
+    Alias {
+        /// The alias name to create (default: mcp)
+        #[arg(default_value = "mcp")]
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]

@@ -10,7 +10,7 @@ name = "mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "mcp"
+name = "MasterControlProgram"
 path = "src/main.rs"
 
 [dependencies]

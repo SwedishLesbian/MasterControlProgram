@@ -360,6 +360,54 @@ async fn main() -> Result<()> {
             0
         }
 
+        Commands::Alias { name } => {
+            let exe = std::env::current_exe()?;
+            let exe_str = exe.display().to_string();
+
+            if cfg!(target_os = "windows") {
+                // Create a .cmd wrapper next to the binary
+                let alias_path = exe.parent().unwrap().join(format!("{name}.cmd"));
+                let content = format!("@echo off\r\n\"{exe_str}\" %*\r\n");
+                std::fs::write(&alias_path, &content)?;
+                if json_output {
+                    println!(
+                        "{}",
+                        json!({"alias": name, "path": alias_path.display().to_string()})
+                    );
+                } else {
+                    println!("Created alias '{name}' -> {}", alias_path.display());
+                    println!(
+                        "Ensure {} is in your PATH.",
+                        exe.parent().unwrap().display()
+                    );
+                }
+            } else {
+                // Create a symlink next to the binary
+                let alias_path = exe.parent().unwrap().join(&name);
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(&exe, &alias_path)?;
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::copy(&exe, &alias_path)?;
+                }
+                if json_output {
+                    println!(
+                        "{}",
+                        json!({"alias": name, "path": alias_path.display().to_string()})
+                    );
+                } else {
+                    println!("Created alias '{name}' -> {}", alias_path.display());
+                    println!(
+                        "Ensure {} is in your PATH.",
+                        exe.parent().unwrap().display()
+                    );
+                }
+            }
+            0
+        }
+
         Commands::Diagnose => {
             let agents = manager.list_agents(None, None).await?;
             let providers = manager.get_providers().await;
