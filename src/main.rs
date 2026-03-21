@@ -845,17 +845,40 @@ async fn handle_config_command(
         }
 
         ConfigCommands::SetModel { name } => {
+            // If the user passed a number, resolve it from the model list
+            let resolved_name = if let Ok(num) = name.parse::<usize>() {
+                let provider_name = &config.default.provider;
+                match manager.list_models(provider_name).await {
+                    Ok(models) if num >= 1 && num <= models.len() => {
+                        models[num - 1].clone()
+                    }
+                    Ok(models) => {
+                        eprintln!(
+                            "Model number {num} out of range (1-{}). Use 'config models' to see the list.",
+                            models.len()
+                        );
+                        return Ok(1);
+                    }
+                    Err(_) => {
+                        eprintln!("Could not fetch model list to resolve number. Use the full model name instead.");
+                        return Ok(1);
+                    }
+                }
+            } else {
+                name.clone()
+            };
+
             let mut new_config = config.clone();
-            new_config.default.model = name.clone();
+            new_config.default.model = resolved_name.clone();
             config::save_config(&new_config)?;
 
             if json_output {
                 println!(
                     "{}",
-                    json!({"default_model": name, "default_provider": config.default.provider})
+                    json!({"default_model": resolved_name, "default_provider": config.default.provider})
                 );
             } else {
-                println!("Default model set to: {name}");
+                println!("Default model set to: {resolved_name}");
             }
             Ok(0)
         }
@@ -883,7 +906,7 @@ async fn handle_config_command(
                             println!("  {:>3}. {m}{marker}", i + 1);
                         }
                         println!(
-                            "\nUse `mcp config set-model <MODEL>` to change the default."
+                            "\nUse `MasterControlProgram config set-model <MODEL or NUMBER>` to change the default."
                         );
                     }
                     Ok(0)
