@@ -226,6 +226,17 @@ pub fn infer_provider_type(name: &str) -> String {
     }
 }
 
+/// Infer the default API base URL for a known provider type.
+pub fn infer_provider_url(provider_type: &str) -> Option<String> {
+    match provider_type {
+        "openai" => Some("https://api.openai.com/v1".into()),
+        "anthropic" => Some("https://api.anthropic.com/v1".into()),
+        "nvidia_nim" | "nvidia-nim" => Some("https://integrate.api.nvidia.com/v1".into()),
+        "huggingface" | "hf" => Some("https://api-inference.huggingface.co/models".into()),
+        _ => None,
+    }
+}
+
 /// Ensure the MCP home directory and subdirectories exist.
 pub fn ensure_dirs() -> Result<()> {
     let home = mcp_home();

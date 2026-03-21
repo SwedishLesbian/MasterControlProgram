@@ -783,10 +783,11 @@ async fn handle_config_command(
                 let inferred_type = provider_type
                     .clone()
                     .unwrap_or_else(|| config::infer_provider_type(&name));
+                let effective_url = url.clone().or_else(|| config::infer_provider_url(&inferred_type));
                 let entry = config::ProviderEntry {
                     provider_type: inferred_type.clone(),
                     api_key: api_key.clone(),
-                    url: url.clone(),
+                    url: effective_url,
                     model: model.clone(),
                     timeout: 300,
                     max_retries: 3,

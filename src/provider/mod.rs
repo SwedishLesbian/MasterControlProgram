@@ -82,17 +82,17 @@ pub fn build_provider(
         "anthropic" => Ok(Box::new(AnthropicProvider::new(
             name, &base_url, &model, &api_key, timeout, max_retries,
         )?)),
-        "nvidia-nim" => Ok(Box::new(NvidiaNimProvider::new(
+        "nvidia-nim" | "nvidia_nim" => Ok(Box::new(NvidiaNimProvider::new(
             name, &base_url, &model, &api_key, timeout, max_retries,
         )?)),
-        "huggingface" => Ok(Box::new(HuggingFaceProvider::new(
+        "huggingface" | "hf" => Ok(Box::new(HuggingFaceProvider::new(
             name, &base_url, &model, &api_key, timeout, max_retries,
         )?)),
-        "amazon-bedrock" => {
+        "amazon-bedrock" | "bedrock" => {
             let region = entry.region.clone().unwrap_or_else(|| "us-east-1".into());
             Ok(Box::new(BedrockProvider::new(name, &model, &region)?))
         }
-        "openai-compatible" => Ok(Box::new(OpenAiProvider::new(
+        "openai-compatible" | "openai_compatible" => Ok(Box::new(OpenAiProvider::new(
             name, &base_url, &model, &api_key, timeout, max_retries,
         )?)),
         other => bail!("Unknown provider type: {other}"),
