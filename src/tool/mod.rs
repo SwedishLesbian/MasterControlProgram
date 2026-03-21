@@ -288,14 +288,6 @@ pub fn discovery_response() -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
-    fn set_test_home(dir: &TempDir) {
-        std::env::set_var("HOME", dir.path());
-        // Also set USERPROFILE for Windows
-        std::env::set_var("USERPROFILE", dir.path());
-    }
-
     #[test]
     fn test_tool_definition_serialization() {
         let tool = ToolDefinition {
