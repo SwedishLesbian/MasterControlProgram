@@ -87,7 +87,7 @@ pub fn register_from_role(name: &str, role_name: &str) -> Result<ToolDefinition>
             "description": "Subset of tools this invocation may use"
         });
 
-        // Try to load sub-tool schemas from ~/.mcp/tools/ for richer discovery
+        // Try to load sub-tool schemas from ~/.mastercontrolprogram/tools/ for richer discovery
         let mut sub_tools = Vec::new();
         for tool_name in &role.allowed_tools {
             let schema_path = crate::config::mcp_home()
@@ -138,7 +138,7 @@ pub fn register_from_workflow(name: &str, workflow_path: &str) -> Result<ToolDef
     // Validate the workflow file exists
     let path = std::path::Path::new(workflow_path);
     if !path.exists() {
-        // Check in ~/.mcp/workflows/
+        // Check in ~/.mastercontrolprogram/workflows/
         let wf_path = mcp_home().join("workflows").join(workflow_path);
         if !wf_path.exists() {
             bail!("Workflow file '{workflow_path}' not found");

@@ -99,7 +99,7 @@ fn test_env_resolution_in_api_key() {
 #[test]
 fn test_mcp_home_is_under_user_home() {
     let home = mcp::config::mcp_home();
-    assert!(home.ends_with(".mcp"));
+    assert!(home.ends_with(".mastercontrolprogram"));
 }
 
 // ── Provider factory tests ────────────────────────────────────────────

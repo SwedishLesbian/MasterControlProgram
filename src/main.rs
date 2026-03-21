@@ -707,7 +707,7 @@ async fn handle_config_command(
             let home = config::mcp_home();
             for sub in &["roles", "logs", "tools", "workflows"] {
                 if !home.join(sub).exists() {
-                    warnings.push(format!("Directory ~/.mcp/{sub} does not exist. Run 'diagnose' to create it."));
+                    warnings.push(format!("Directory ~/.mastercontrolprogram/{sub} does not exist. Run 'diagnose' to create it."));
                 }
             }
 

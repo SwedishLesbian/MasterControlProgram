@@ -615,7 +615,7 @@ pub fn load_workflow(name_or_path: &str) -> Result<WorkflowDefinition> {
         return parse_workflow_yaml(&text);
     }
 
-    // Try in ~/.mcp/workflows/
+    // Try in ~/.mastercontrolprogram/workflows/
     let wf_path = workflows_dir().join(name_or_path);
     if wf_path.exists() {
         let text = std::fs::read_to_string(&wf_path)?;

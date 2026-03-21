@@ -1,6 +1,7 @@
 # MasterControlProgram — recommended config for local tool usage
 #
-# Copy this to ~/.mcp/config.toml and adjust as needed.
+# Copy this to ~/.mastercontrolprogram/config.toml and adjust as needed.
+# Or use: mcp config init && mcp config set-provider nvidia_nim --api-key YOUR_KEY
 
 [default]
 provider = "nvidia-nim"

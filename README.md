@@ -58,26 +58,35 @@ cargo build --release
 
 ### 1. Configure a provider
 
-Create `~/.mcp/config.toml`:
+```bash
+# Initialize config directory and default config
+mcp config init
+
+# Add a provider with your API key
+mcp config set-provider nvidia_nim --api-key "nvapi-..."
+
+# Browse available models and pick one
+mcp config models
+mcp config set-model meta/llama-3.1-8b-instruct
+
+# Validate everything is set up correctly
+mcp config validate
+```
+
+Or create `~/.mastercontrolprogram/config.toml` manually:
 
 ```toml
 [default]
-provider = "nvidia-nim"
+provider = "nvidia_nim"
 model = "meta/llama-3.1-8b-instruct"
 
-[provider.nvidia-nim]
-type = "nvidia-nim"
+[provider.nvidia_nim]
+type = "nvidia_nim"
 url = "https://integrate.api.nvidia.com/v1"
 model = "meta/llama-3.1-8b-instruct"
 api_key = "<env:MCP_NVIDIA_NIM_KEY>"
 timeout = 120
 max_retries = 2
-```
-
-Set your API key:
-
-```bash
-export MCP_NVIDIA_NIM_KEY="nvapi-..."
 ```
 
 ### 2. Spawn an agent
@@ -124,6 +133,7 @@ Commands:
   agent       Agent management (steer, kill, pause, resume)
   agents      List / show agents
   role        Role management (create, list, show, delete, patch)
+  config      Configuration (init, show, validate, set-provider, set-model, set-default, models)
   tool        Tool registry (register, list, show, delete)
   workflow    Workflow engine (run, list, show, status, stop, validate)
   provider    Provider management (list, show, check)
@@ -139,7 +149,7 @@ Global options:
 
 ## Roles
 
-Roles live in `~/.mcp/roles/*.toml` and define agent identity:
+Roles live in `~/.mastercontrolprogram/roles/*.toml` and define agent identity:
 
 ```toml
 name = "coder"
@@ -179,7 +189,7 @@ Tools are discoverable via the server at `GET /tools` and included in `GET /mcp-
 
 ## Workflow Engine
 
-Define multi-step YAML workflows in `~/.mcp/workflows/`:
+Define multi-step YAML workflows in `~/.mastercontrolprogram/workflows/`:
 
 ```yaml
 name: build_and_test
@@ -232,20 +242,18 @@ mcp workflow validate build_and_test.yaml
 
 MCP ships with a recommended `local_coder` role and tool schemas that let agents read, write, edit, and organize files on your machine — safely by default.
 
-### 1. Copy the role and config
+### 1. Set up provider and role
 
 ```bash
-# Copy the example role into your MCP roles directory
-cp examples/roles/local_coder.toml ~/.mcp/roles/
+# Configure your provider from the CLI
+mcp config set-provider nvidia_nim --api-key "nvapi-..."
+mcp config set-model meta/llama-3.1-8b-instruct
 
-# Optionally copy the recommended config
-cp examples/config.toml ~/.mcp/config.toml
-```
+# Copy the example role into your roles directory
+cp examples/roles/local_coder.toml ~/.mastercontrolprogram/roles/
 
-### 2. Set your API key
-
-```bash
-export MCP_NVIDIA_NIM_KEY="nvapi-..."
+# Set local_coder as the default role
+mcp config set-default role local_coder
 ```
 
 ### 3. Register the tool
@@ -266,7 +274,7 @@ The agent uses the `local_coder` role by default (if configured in `config.toml`
 - It can **read**, **write**, **edit** files and **run commands**
 - It will **never delete or rename** files without explicit confirmation
 - It **prefers read-only** operations when unsure
-- All actions are logged to `~/.mcp/logs/` for auditing
+- All actions are logged to `~/.mastercontrolprogram/logs/` for auditing
 
 ### 5. Available sub-tools
 

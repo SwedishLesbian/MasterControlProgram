@@ -158,17 +158,17 @@ impl ProviderEntry {
     }
 }
 
-/// Returns the MCP home directory (~/.mcp).
+/// Returns the MCP home directory (~/.mastercontrolprogram).
 pub fn mcp_home() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mcp")
+        .join(".mastercontrolprogram")
 }
 
-/// Load config by merging global (~/.mcp/config.toml) and local (./.mcp/config.toml).
+/// Load config by merging global (~/.mastercontrolprogram/config.toml) and local (./.mastercontrolprogram/config.toml).
 pub fn load_config() -> Result<McpConfig> {
     let global_path = mcp_home().join("config.toml");
-    let local_path = PathBuf::from(".mcp").join("config.toml");
+    let local_path = PathBuf::from(".mastercontrolprogram").join("config.toml");
 
     let mut config = McpConfig::default();
 
@@ -204,7 +204,7 @@ fn merge_config(base: &mut McpConfig, overlay: McpConfig) {
     }
 }
 
-/// Save a config to the global config file (~/.mcp/config.toml).
+/// Save a config to the global config file (~/.mastercontrolprogram/config.toml).
 pub fn save_config(config: &McpConfig) -> Result<()> {
     let path = mcp_home().join("config.toml");
     std::fs::create_dir_all(mcp_home())?;
