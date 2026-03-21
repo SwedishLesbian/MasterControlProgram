@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{info, warn};
 
 use crate::config::{LimitsConfig, McpConfig};
-use crate::provider::{ChatMessage, ProviderClient};
+use crate::provider::{self, ChatMessage, Provider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -112,16 +112,16 @@ pub struct AgentManager {
     agents: RwLock<HashMap<u64, Arc<Mutex<AgentHandle>>>>,
     next_id: Mutex<u64>,
     limits: LimitsConfig,
-    providers: RwLock<HashMap<String, ProviderClient>>,
+    providers: RwLock<HashMap<String, Arc<dyn Provider>>>,
 }
 
 impl AgentManager {
     pub fn new(config: &McpConfig) -> Result<Self> {
-        let mut providers = HashMap::new();
+        let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
         for (name, entry) in &config.provider {
-            match ProviderClient::from_config(name, entry, &config.default.model) {
+            match provider::build_provider(name, entry, &config.default.model) {
                 Ok(client) => {
-                    providers.insert(name.clone(), client);
+                    providers.insert(name.clone(), Arc::from(client));
                 }
                 Err(e) => {
                     warn!("Failed to initialize provider '{name}': {e}");
@@ -144,12 +144,18 @@ impl AgentManager {
             let mut active = 0u32;
             for handle in agents.values() {
                 let h = handle.lock().await;
-                if matches!(h.info.status, AgentStatus::Running | AgentStatus::Queued | AgentStatus::Paused) {
+                if matches!(
+                    h.info.status,
+                    AgentStatus::Running | AgentStatus::Queued | AgentStatus::Paused
+                ) {
                     active += 1;
                 }
             }
             if active >= self.limits.max_concurrent_agents {
-                bail!("Max concurrent agents ({}) reached", self.limits.max_concurrent_agents);
+                bail!(
+                    "Max concurrent agents ({}) reached",
+                    self.limits.max_concurrent_agents
+                );
             }
         }
 
@@ -162,13 +168,19 @@ impl AgentManager {
         };
 
         let providers = self.providers.read().await;
-        let provider = providers
+        let provider_arc = providers
             .get(&provider_name)
-            .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not configured"))?;
+            .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not configured"))?
+            .clone();
 
-        let model = req.model.clone().unwrap_or_else(|| provider.model.clone());
+        let model = req
+            .model
+            .clone()
+            .unwrap_or_else(|| provider_arc.model().to_string());
         let max_depth = req.max_depth.unwrap_or(self.limits.max_depth);
-        let max_children = req.max_children.unwrap_or(self.limits.max_children_per_parent);
+        let max_children = req
+            .max_children
+            .unwrap_or(self.limits.max_children_per_parent);
         let timeout_sec = req.timeout_sec.unwrap_or(self.limits.agent_timeout_sec);
         let depth = req.depth.unwrap_or(0);
 
@@ -229,6 +241,9 @@ impl AgentManager {
             pause_notify: Arc::new(Notify::new()),
         }));
 
+        // Release providers lock before write-locking agents
+        drop(providers);
+
         // Register the agent
         {
             let mut agents = self.agents.write().await;
@@ -241,7 +256,6 @@ impl AgentManager {
             if let Some(parent_handle) = agents.get(&parent_id) {
                 let mut parent = parent_handle.lock().await;
                 if parent.info.children.len() as u32 >= parent.info.max_children {
-                    // Remove the agent we just registered
                     drop(parent);
                     drop(agents);
                     let mut agents = self.agents.write().await;
@@ -253,10 +267,9 @@ impl AgentManager {
         }
 
         // Spawn the agent task
-        let provider_client = provider.clone();
         let agent_handle = handle.clone();
         tokio::spawn(async move {
-            run_agent_loop(agent_handle, provider_client).await;
+            run_agent_loop(agent_handle, provider_arc).await;
         });
 
         info!("Spawned agent {id} with task: {}", req.task);
@@ -265,11 +278,12 @@ impl AgentManager {
 
     pub async fn get_status(&self, id: u64) -> Result<AgentInfo> {
         let agents = self.agents.read().await;
-        let handle = agents.get(&id).ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
+        let handle = agents
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
         let h = handle.lock().await;
         let mut info = h.info.clone();
 
-        // Calculate remaining timeout
         let elapsed = (Utc::now() - info.created_at).num_seconds().max(0) as u64;
         info.timeout_remaining_sec = Some(info.timeout_sec.saturating_sub(elapsed));
 
@@ -286,7 +300,6 @@ impl AgentManager {
         for handle in agents.values() {
             let h = handle.lock().await;
             let mut info = h.info.clone();
-            // Apply filters
             if let Some(soul) = soul_filter {
                 if info.soul.as_deref() != Some(soul) {
                     continue;
@@ -307,7 +320,9 @@ impl AgentManager {
 
     pub async fn steer(&self, id: u64, req: SteerRequest) -> Result<SteerResponse> {
         let agents = self.agents.read().await;
-        let handle = agents.get(&id).ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
+        let handle = agents
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
         let mut h = handle.lock().await;
 
         let mut instruction_appended = false;
@@ -327,7 +342,7 @@ impl AgentManager {
             h.info.system_prompt.push('\n');
             h.info.system_prompt.push_str(patch);
             let new_len = h.info.system_prompt.len() as i64;
-            delta = (new_len - old_len) / 4; // rough token estimate
+            delta = (new_len - old_len) / 4;
             system_prompt_patched = true;
         }
 
@@ -342,7 +357,9 @@ impl AgentManager {
 
     pub async fn kill(&self, id: u64) -> Result<()> {
         let agents = self.agents.read().await;
-        let handle = agents.get(&id).ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
+        let handle = agents
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
         let mut h = handle.lock().await;
         h.info.status = AgentStatus::Killed;
         h.pause_notify.notify_waiters();
@@ -355,7 +372,10 @@ impl AgentManager {
         let mut count = 0;
         for handle in agents.values() {
             let mut h = handle.lock().await;
-            if matches!(h.info.status, AgentStatus::Running | AgentStatus::Queued | AgentStatus::Paused) {
+            if matches!(
+                h.info.status,
+                AgentStatus::Running | AgentStatus::Queued | AgentStatus::Paused
+            ) {
                 h.info.status = AgentStatus::Killed;
                 h.pause_notify.notify_waiters();
                 count += 1;
@@ -367,7 +387,9 @@ impl AgentManager {
 
     pub async fn pause(&self, id: u64) -> Result<()> {
         let agents = self.agents.read().await;
-        let handle = agents.get(&id).ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
+        let handle = agents
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
         let mut h = handle.lock().await;
         if h.info.status != AgentStatus::Running {
             bail!("Agent {id} is not running (status: {})", h.info.status);
@@ -379,7 +401,9 @@ impl AgentManager {
 
     pub async fn resume(&self, id: u64) -> Result<()> {
         let agents = self.agents.read().await;
-        let handle = agents.get(&id).ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
+        let handle = agents
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
         let mut h = handle.lock().await;
         if h.info.status != AgentStatus::Paused {
             bail!("Agent {id} is not paused (status: {})", h.info.status);
@@ -405,8 +429,7 @@ impl AgentManager {
 }
 
 /// The main agent execution loop.
-async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: ProviderClient) {
-    // Initial call
+async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: Arc<dyn Provider>) {
     let (messages, system_prompt) = {
         let h = handle.lock().await;
         (h.info.messages.clone(), h.info.system_prompt.clone())
@@ -440,7 +463,6 @@ async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: ProviderClien
             h.info.phase = Some("completed".into());
             h.info.status = AgentStatus::Completed;
 
-            // Write log
             if let Err(e) = write_agent_log(&h.info) {
                 warn!("Failed to write agent log: {e}");
             }

@@ -5,6 +5,10 @@ edition = "2021"
 description = "Master Control Program – CLI-first agent-orchestration system"
 license = "MIT"
 
+[lib]
+name = "mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mcp"
 path = "src/main.rs"
@@ -40,6 +44,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 thiserror = "2"
 anyhow = "1"
+async-trait = "0.1"
 
 # AWS SDK for Bedrock
 aws-config = { version = "1", features = ["behavior-version-latest"] }
