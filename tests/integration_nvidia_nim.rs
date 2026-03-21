@@ -6,6 +6,10 @@ fn nim_key() -> Option<String> {
     std::env::var("MCP_NVIDIA_NIM_KEY").ok().filter(|k| !k.is_empty())
 }
 
+fn test_db() -> std::sync::Arc<mcp::persistence::Database> {
+    std::sync::Arc::new(mcp::persistence::Database::open_memory().unwrap())
+}
+
 #[tokio::test]
 async fn test_nvidia_nim_health_check() {
     let api_key = match nim_key() {
@@ -118,7 +122,7 @@ async fn test_nvidia_nim_agent_spawn_and_complete() {
         ..Default::default()
     };
 
-    let mgr = mcp::agent::AgentManager::new(&config).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&config, test_db()).unwrap();
 
     // Spawn an agent
     let req = mcp::agent::SpawnRequest {
@@ -201,7 +205,7 @@ async fn test_nvidia_nim_agent_steer() {
         ..Default::default()
     };
 
-    let mgr = mcp::agent::AgentManager::new(&config).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&config, test_db()).unwrap();
 
     let req = mcp::agent::SpawnRequest {
         task: "Wait for further instructions.".into(),

@@ -1,6 +1,10 @@
 /// Unit tests for MCP core logic — config, roles, agent manager, provider factory.
 /// These run without network access (no API keys needed).
 
+fn test_db() -> std::sync::Arc<mcp::persistence::Database> {
+    std::sync::Arc::new(mcp::persistence::Database::open_memory().unwrap())
+}
+
 // ── Config tests ──────────────────────────────────────────────────────
 
 #[test]
@@ -213,7 +217,7 @@ fn test_build_unknown_provider_fails() {
 #[tokio::test]
 async fn test_agent_manager_empty_list() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let agents = mgr.list_agents(None, None).await.unwrap();
     assert!(agents.is_empty());
 }
@@ -221,7 +225,7 @@ async fn test_agent_manager_empty_list() {
 #[tokio::test]
 async fn test_agent_manager_spawn_no_provider_fails() {
     let cfg = mcp::config::McpConfig::default(); // no providers configured
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
 
     let req = mcp::agent::SpawnRequest {
         task: "test task".into(),
@@ -245,7 +249,7 @@ async fn test_agent_manager_spawn_no_provider_fails() {
 #[tokio::test]
 async fn test_agent_manager_status_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let result = mgr.get_status(999).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
@@ -254,7 +258,7 @@ async fn test_agent_manager_status_not_found() {
 #[tokio::test]
 async fn test_agent_manager_kill_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let result = mgr.kill(999).await;
     assert!(result.is_err());
 }
@@ -262,7 +266,7 @@ async fn test_agent_manager_kill_not_found() {
 #[tokio::test]
 async fn test_agent_manager_kill_all_empty() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let count = mgr.kill_all().await.unwrap();
     assert_eq!(count, 0);
 }
@@ -270,7 +274,7 @@ async fn test_agent_manager_kill_all_empty() {
 #[tokio::test]
 async fn test_agent_manager_steer_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let req = mcp::agent::SteerRequest {
         instruction: Some("do something".into()),
         prompt_patch: None,
@@ -281,21 +285,21 @@ async fn test_agent_manager_steer_not_found() {
 #[tokio::test]
 async fn test_agent_manager_pause_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     assert!(mgr.pause(999).await.is_err());
 }
 
 #[tokio::test]
 async fn test_agent_manager_resume_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     assert!(mgr.resume(999).await.is_err());
 }
 
 #[tokio::test]
 async fn test_agent_manager_check_provider_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     assert!(mgr.check_provider("nonexistent").await.is_err());
 }
 

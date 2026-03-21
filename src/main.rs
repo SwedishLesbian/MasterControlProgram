@@ -2,6 +2,7 @@ mod agent;
 mod cli;
 mod config;
 mod logging;
+mod persistence;
 mod provider;
 mod role;
 mod server;
@@ -27,7 +28,8 @@ async fn main() -> Result<()> {
     let config = load_config()?;
     let json_output = cli.json || config.cli.json_output;
 
-    let manager = Arc::new(AgentManager::new(&config)?);
+    let db = Arc::new(persistence::Database::open()?);
+    let manager = Arc::new(AgentManager::new(&config, db)?);
     let workflow_runner = Arc::new(workflow::WorkflowRunner::new());
 
     let exit_code = match cli.command {

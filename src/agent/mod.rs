@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{info, warn};
 
 use crate::config::{LimitsConfig, McpConfig};
+use crate::persistence::Database;
 use crate::provider::{self, ChatMessage, Provider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,10 +114,11 @@ pub struct AgentManager {
     next_id: Mutex<u64>,
     limits: LimitsConfig,
     providers: RwLock<HashMap<String, Arc<dyn Provider>>>,
+    db: Arc<Database>,
 }
 
 impl AgentManager {
-    pub fn new(config: &McpConfig) -> Result<Self> {
+    pub fn new(config: &McpConfig, db: Arc<Database>) -> Result<Self> {
         let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
         for (name, entry) in &config.provider {
             match provider::build_provider(name, entry, &config.default.model) {
@@ -129,11 +131,14 @@ impl AgentManager {
             }
         }
 
+        let next_id = db.next_agent_id()?;
+
         Ok(Self {
             agents: RwLock::new(HashMap::new()),
-            next_id: Mutex::new(1),
+            next_id: Mutex::new(next_id),
             limits: config.limits.clone(),
             providers: RwLock::new(providers),
+            db,
         })
     }
 
@@ -225,6 +230,11 @@ impl AgentManager {
             timeout_remaining_sec: Some(timeout_sec),
         };
 
+        // Persist to SQLite
+        if let Err(e) = self.db.insert_agent(&info) {
+            warn!("Failed to persist agent to database: {e}");
+        }
+
         let response = SpawnResponse {
             id,
             soul: req.soul.clone(),
@@ -268,8 +278,9 @@ impl AgentManager {
 
         // Spawn the agent task
         let agent_handle = handle.clone();
+        let db = self.db.clone();
         tokio::spawn(async move {
-            run_agent_loop(agent_handle, provider_arc).await;
+            run_agent_loop(agent_handle, provider_arc, db).await;
         });
 
         info!("Spawned agent {id} with task: {}", req.task);
@@ -277,17 +288,22 @@ impl AgentManager {
     }
 
     pub async fn get_status(&self, id: u64) -> Result<AgentInfo> {
-        let agents = self.agents.read().await;
-        let handle = agents
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))?;
-        let h = handle.lock().await;
-        let mut info = h.info.clone();
+        // Try in-memory first (live agents in this process)
+        {
+            let agents = self.agents.read().await;
+            if let Some(handle) = agents.get(&id) {
+                let h = handle.lock().await;
+                let mut info = h.info.clone();
+                let elapsed = (Utc::now() - info.created_at).num_seconds().max(0) as u64;
+                info.timeout_remaining_sec = Some(info.timeout_sec.saturating_sub(elapsed));
+                return Ok(info);
+            }
+        }
 
-        let elapsed = (Utc::now() - info.created_at).num_seconds().max(0) as u64;
-        info.timeout_remaining_sec = Some(info.timeout_sec.saturating_sub(elapsed));
-
-        Ok(info)
+        // Fall back to database
+        self.db
+            .get_agent(id)?
+            .ok_or_else(|| anyhow::anyhow!("Agent {id} not found"))
     }
 
     pub async fn list_agents(
@@ -295,27 +311,21 @@ impl AgentManager {
         soul_filter: Option<&str>,
         role_filter: Option<&str>,
     ) -> Result<Vec<AgentInfo>> {
-        let agents = self.agents.read().await;
-        let mut result = Vec::new();
-        for handle in agents.values() {
-            let h = handle.lock().await;
-            let mut info = h.info.clone();
-            if let Some(soul) = soul_filter {
-                if info.soul.as_deref() != Some(soul) {
-                    continue;
-                }
-            }
-            if let Some(role) = role_filter {
-                if info.role.as_deref() != Some(role) {
-                    continue;
-                }
+        // Read all agents from database
+        let mut agents = self.db.list_agents(soul_filter, role_filter)?;
+
+        // Overlay live in-memory state for running agents in this process
+        let live = self.agents.read().await;
+        for info in agents.iter_mut() {
+            if let Some(handle) = live.get(&info.id) {
+                let h = handle.lock().await;
+                *info = h.info.clone();
             }
             let elapsed = (Utc::now() - info.created_at).num_seconds().max(0) as u64;
             info.timeout_remaining_sec = Some(info.timeout_sec.saturating_sub(elapsed));
-            result.push(info);
         }
-        result.sort_by_key(|a| a.id);
-        Ok(result)
+        agents.sort_by_key(|a| a.id);
+        Ok(agents)
     }
 
     pub async fn steer(&self, id: u64, req: SteerRequest) -> Result<SteerResponse> {
@@ -335,6 +345,10 @@ impl AgentManager {
                 content: instruction.clone(),
             });
             instruction_appended = true;
+            let seq = h.info.messages.len() - 1;
+            let _ = self
+                .db
+                .insert_message(id, seq, h.info.messages.last().unwrap());
         }
 
         if let Some(ref patch) = req.prompt_patch {
@@ -344,6 +358,7 @@ impl AgentManager {
             let new_len = h.info.system_prompt.len() as i64;
             delta = (new_len - old_len) / 4;
             system_prompt_patched = true;
+            let _ = self.db.update_system_prompt(id, &h.info.system_prompt);
         }
 
         Ok(SteerResponse {
@@ -363,6 +378,15 @@ impl AgentManager {
         let mut h = handle.lock().await;
         h.info.status = AgentStatus::Killed;
         h.pause_notify.notify_waiters();
+        let _ = self.db.update_agent_status(
+            id,
+            &AgentStatus::Killed,
+            Some("killed"),
+            h.info.progress,
+            None,
+            None,
+            None,
+        );
         info!("Killed agent {id}");
         Ok(())
     }
@@ -378,6 +402,15 @@ impl AgentManager {
             ) {
                 h.info.status = AgentStatus::Killed;
                 h.pause_notify.notify_waiters();
+                let _ = self.db.update_agent_status(
+                    h.info.id,
+                    &AgentStatus::Killed,
+                    Some("killed"),
+                    h.info.progress,
+                    None,
+                    None,
+                    None,
+                );
                 count += 1;
             }
         }
@@ -395,6 +428,15 @@ impl AgentManager {
             bail!("Agent {id} is not running (status: {})", h.info.status);
         }
         h.info.status = AgentStatus::Paused;
+        let _ = self.db.update_agent_status(
+            id,
+            &AgentStatus::Paused,
+            Some("paused"),
+            h.info.progress,
+            None,
+            None,
+            None,
+        );
         info!("Paused agent {id}");
         Ok(())
     }
@@ -410,6 +452,15 @@ impl AgentManager {
         }
         h.info.status = AgentStatus::Running;
         h.pause_notify.notify_waiters();
+        let _ = self.db.update_agent_status(
+            id,
+            &AgentStatus::Running,
+            Some("executing"),
+            h.info.progress,
+            None,
+            None,
+            None,
+        );
         info!("Resumed agent {id}");
         Ok(())
     }
@@ -437,10 +488,18 @@ impl AgentManager {
 }
 
 /// The main agent execution loop.
-async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: Arc<dyn Provider>) {
-    let (messages, system_prompt) = {
+async fn run_agent_loop(
+    handle: Arc<Mutex<AgentHandle>>,
+    provider: Arc<dyn Provider>,
+    db: Arc<Database>,
+) {
+    let (messages, system_prompt, agent_id) = {
         let h = handle.lock().await;
-        (h.info.messages.clone(), h.info.system_prompt.clone())
+        (
+            h.info.messages.clone(),
+            h.info.system_prompt.clone(),
+            h.info.id,
+        )
     };
 
     let sys = if system_prompt.is_empty() {
@@ -454,6 +513,15 @@ async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: Arc<dyn Provi
         h.info.phase = Some("executing".into());
         h.info.progress = 0.1;
     }
+    let _ = db.update_agent_status(
+        agent_id,
+        &AgentStatus::Running,
+        Some("executing"),
+        0.1,
+        None,
+        None,
+        None,
+    );
 
     match provider.chat(&messages, sys).await {
         Ok(resp) => {
@@ -465,11 +533,24 @@ async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: Arc<dyn Provi
             h.info.last_output_tokens = resp.tokens_used;
             h.info.messages.push(ChatMessage {
                 role: "assistant".into(),
-                content: resp.content,
+                content: resp.content.clone(),
             });
             h.info.progress = 1.0;
             h.info.phase = Some("completed".into());
             h.info.status = AgentStatus::Completed;
+
+            // Persist to database
+            let _ = db.update_agent_status(
+                agent_id,
+                &AgentStatus::Completed,
+                Some("completed"),
+                1.0,
+                Some(&resp.content),
+                resp.tokens_used,
+                None,
+            );
+            let seq = h.info.messages.len() - 1;
+            let _ = db.insert_message(agent_id, seq, h.info.messages.last().unwrap());
 
             if let Err(e) = write_agent_log(&h.info) {
                 warn!("Failed to write agent log: {e}");
@@ -481,6 +562,17 @@ async fn run_agent_loop(handle: Arc<Mutex<AgentHandle>>, provider: Arc<dyn Provi
                 h.info.status = AgentStatus::Failed;
                 h.info.phase = Some("failed".into());
                 h.info.last_output = Some(format!("Error: {e}"));
+
+                // Persist to database
+                let _ = db.update_agent_status(
+                    agent_id,
+                    &AgentStatus::Failed,
+                    Some("failed"),
+                    h.info.progress,
+                    Some(&format!("Error: {e}")),
+                    None,
+                    Some(&e.to_string()),
+                );
 
                 if let Err(e) = write_agent_log(&h.info) {
                     warn!("Failed to write agent log: {e}");

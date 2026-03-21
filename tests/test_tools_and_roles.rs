@@ -2,6 +2,10 @@
 /// and agent spawning with roles and tool schemas.
 /// These run without network access (no API keys needed).
 
+fn test_db() -> std::sync::Arc<mcp::persistence::Database> {
+    std::sync::Arc::new(mcp::persistence::Database::open_memory().unwrap())
+}
+
 // ── Config with role/tool defaults ──────────────────────────────────
 
 #[test]
@@ -385,7 +389,7 @@ async fn test_huggingface_list_models() {
 #[tokio::test]
 async fn test_agent_manager_list_models_not_found() {
     let cfg = mcp::config::McpConfig::default();
-    let mgr = mcp::agent::AgentManager::new(&cfg).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&cfg, test_db()).unwrap();
     let result = mgr.list_models("nonexistent").await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not configured"));
@@ -459,7 +463,7 @@ async fn test_workflow_runner_lifecycle() {
         ..Default::default()
     };
 
-    let manager = std::sync::Arc::new(mcp::agent::AgentManager::new(&config).unwrap());
+    let manager = std::sync::Arc::new(mcp::agent::AgentManager::new(&config, test_db()).unwrap());
     let runner = mcp::workflow::WorkflowRunner::new();
 
     // A simple workflow that spawns an agent (will fail due to fake key, but runner should handle it)
@@ -499,7 +503,7 @@ steps:
 #[tokio::test]
 async fn test_workflow_runner_stop() {
     let config = mcp::config::McpConfig::default();
-    let manager = std::sync::Arc::new(mcp::agent::AgentManager::new(&config).unwrap());
+    let manager = std::sync::Arc::new(mcp::agent::AgentManager::new(&config, test_db()).unwrap());
     let runner = mcp::workflow::WorkflowRunner::new();
 
     // Workflow with a step that references a non-existent provider (will fail at spawn)
@@ -586,7 +590,7 @@ async fn test_spawn_agent_with_local_coder_role_via_nim() {
         ..Default::default()
     };
 
-    let mgr = mcp::agent::AgentManager::new(&config).unwrap();
+    let mgr = mcp::agent::AgentManager::new(&config, test_db()).unwrap();
 
     // Resolve the role manually (as main.rs would)
     let loaded_role = mcp::role::get_role("_mcp_test_local_coder").unwrap();
