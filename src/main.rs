@@ -635,25 +635,192 @@ async fn handle_config_command(
             Ok(0)
         }
 
-        ConfigCommands::SetProvider { name } => {
-            if !config.provider.contains_key(&name) {
-                eprintln!(
-                    "Provider '{name}' is not configured. Available: {}",
-                    config
-                        .provider
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                return Ok(1);
+        ConfigCommands::Init => {
+            let home = config::mcp_home();
+            let config_path = home.join("config.toml");
+
+            if config_path.exists() {
+                if json_output {
+                    println!("{}", json!({"status": "exists", "path": config_path.display().to_string()}));
+                } else {
+                    println!("Config already exists at: {}", config_path.display());
+                    println!("Use 'config show' to view, or 'config set-provider' to update.");
+                }
+            } else {
+                config::ensure_dirs()?;
+                let fresh = config::McpConfig::default();
+                config::save_config(&fresh)?;
+                if json_output {
+                    println!("{}", json!({"status": "created", "path": config_path.display().to_string()}));
+                } else {
+                    println!("Created default config at: {}", config_path.display());
+                    println!();
+                    println!("Next steps:");
+                    println!("  1. Add a provider:  MasterControlProgram config set-provider nvidia_nim --api-key YOUR_KEY");
+                    println!("  2. Pick a model:    MasterControlProgram config models");
+                    println!("  3. Set the model:   MasterControlProgram config set-model MODEL_ID");
+                    println!("  4. Spawn an agent:  MasterControlProgram spawn \"your task here\"");
+                }
+            }
+            Ok(0)
+        }
+
+        ConfigCommands::Validate => {
+            let mut errors: Vec<String> = Vec::new();
+            let mut warnings: Vec<String> = Vec::new();
+
+            // Check default provider is configured
+            if config.provider.is_empty() {
+                errors.push("No providers configured. Use 'config set-provider' to add one.".into());
+            } else if !config.provider.contains_key(&config.default.provider) {
+                errors.push(format!(
+                    "Default provider '{}' is not in the provider list. Available: {}",
+                    config.default.provider,
+                    config.provider.keys().cloned().collect::<Vec<_>>().join(", ")
+                ));
             }
 
+            // Check provider entries
+            for (name, entry) in &config.provider {
+                if entry.api_key.is_none() && entry.provider_type != "bedrock" {
+                    warnings.push(format!("Provider '{name}' has no API key configured."));
+                }
+                if entry.provider_type.is_empty() {
+                    errors.push(format!("Provider '{name}' has an empty provider_type."));
+                }
+            }
+
+            // Check default model
+            if config.default.model.is_empty() {
+                warnings.push("No default model set.".into());
+            }
+
+            // Check default role exists if set
+            if let Some(ref role_name) = config.default.role {
+                let role_path = config::mcp_home().join("roles").join(format!("{role_name}.toml"));
+                if !role_path.exists() {
+                    warnings.push(format!("Default role '{role_name}' not found at {}", role_path.display()));
+                }
+            }
+
+            // Check directories
+            let home = config::mcp_home();
+            for sub in &["roles", "logs", "tools", "workflows"] {
+                if !home.join(sub).exists() {
+                    warnings.push(format!("Directory ~/.mcp/{sub} does not exist. Run 'diagnose' to create it."));
+                }
+            }
+
+            if json_output {
+                println!("{}", json!({
+                    "valid": errors.is_empty(),
+                    "errors": errors,
+                    "warnings": warnings,
+                }));
+            } else if errors.is_empty() && warnings.is_empty() {
+                println!("✓ Configuration is valid.");
+            } else {
+                if !errors.is_empty() {
+                    println!("Errors:");
+                    for e in &errors {
+                        println!("  ✗ {e}");
+                    }
+                }
+                if !warnings.is_empty() {
+                    println!("Warnings:");
+                    for w in &warnings {
+                        println!("  ⚠ {w}");
+                    }
+                }
+                if errors.is_empty() {
+                    println!();
+                    println!("✓ Configuration is valid (with warnings).");
+                }
+            }
+            Ok(if errors.is_empty() { 0 } else { 1 })
+        }
+
+        ConfigCommands::SetDefault { key, value } => {
             let mut new_config = config.clone();
+            match key.to_lowercase().as_str() {
+                "role" => {
+                    new_config.default.role = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"default_role": value}));
+                    } else {
+                        println!("Default role set to: {value}");
+                    }
+                }
+                "tool" => {
+                    new_config.default.tool = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"default_tool": value}));
+                    } else {
+                        println!("Default tool set to: {value}");
+                    }
+                }
+                other => {
+                    eprintln!("Unknown default key '{other}'. Valid keys: role, tool");
+                    return Ok(1);
+                }
+            }
+            Ok(0)
+        }
+
+        ConfigCommands::SetProvider {
+            name,
+            api_key,
+            provider_type,
+            url,
+            model,
+        } => {
+            let mut new_config = config.clone();
+
+            // If the provider doesn't exist yet, create it
+            if !new_config.provider.contains_key(&name) {
+                let inferred_type = provider_type
+                    .clone()
+                    .unwrap_or_else(|| config::infer_provider_type(&name));
+                let entry = config::ProviderEntry {
+                    provider_type: inferred_type.clone(),
+                    api_key: api_key.clone(),
+                    url: url.clone(),
+                    model: model.clone(),
+                    timeout: 300,
+                    max_retries: 3,
+                    region: None,
+                };
+                new_config.provider.insert(name.clone(), entry);
+                if !json_output {
+                    println!("Created provider '{name}' (type: {inferred_type})");
+                }
+            } else {
+                // Update existing provider with any supplied overrides
+                let entry = new_config.provider.get_mut(&name).unwrap();
+                if let Some(ref key) = api_key {
+                    entry.api_key = Some(key.clone());
+                }
+                if let Some(ref t) = provider_type {
+                    entry.provider_type = t.clone();
+                }
+                if let Some(ref u) = url {
+                    entry.url = Some(u.clone());
+                }
+                if let Some(ref m) = model {
+                    entry.model = Some(m.clone());
+                }
+                if !json_output {
+                    println!("Updated provider '{name}'");
+                }
+            }
+
+            // Set as default provider
             new_config.default.provider = name.clone();
 
-            // If the provider has a model configured, adopt it as the default
-            if let Some(entry) = config.provider.get(&name) {
+            // Adopt the provider's model as default if available
+            if let Some(entry) = new_config.provider.get(&name) {
                 if let Some(ref m) = entry.model {
                     new_config.default.model = m.clone();
                 }

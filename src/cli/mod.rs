@@ -332,10 +332,41 @@ pub enum ConfigCommands {
     /// Show the current configuration
     Show,
 
-    /// Set the default provider
+    /// Initialize a fresh config (interactive-friendly)
+    Init,
+
+    /// Validate the current configuration
+    Validate,
+
+    /// Set a default value (role, tool)
+    SetDefault {
+        /// Key to set (role, tool)
+        key: String,
+
+        /// Value to set
+        value: String,
+    },
+
+    /// Set the default provider (creates it if it doesn't exist)
     SetProvider {
-        /// Provider name (must be configured in config.toml)
+        /// Provider name (e.g. openai, anthropic, nvidia_nim, huggingface, bedrock, or a custom name)
         name: String,
+
+        /// API key for the provider (creates/updates the provider entry)
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Provider type override (inferred from name if omitted)
+        #[arg(long, rename_all = "snake_case")]
+        provider_type: Option<String>,
+
+        /// Base URL for the provider API
+        #[arg(long)]
+        url: Option<String>,
+
+        /// Model to use with this provider
+        #[arg(long)]
+        model: Option<String>,
     },
 
     /// Set the default model
@@ -347,7 +378,6 @@ pub enum ConfigCommands {
     /// List available models for a provider (or the default provider)
     Models {
         /// Provider name (defaults to the current default provider)
-        #[arg(long)]
         provider: Option<String>,
     },
 }

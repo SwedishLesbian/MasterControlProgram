@@ -213,6 +213,19 @@ pub fn save_config(config: &McpConfig) -> Result<()> {
     Ok(())
 }
 
+/// Infer the provider_type from the provider name.
+/// Known names map directly; anything else is assumed to be openai_compatible.
+pub fn infer_provider_type(name: &str) -> String {
+    match name.to_lowercase().as_str() {
+        "openai" => "openai".into(),
+        "anthropic" => "anthropic".into(),
+        "nvidia_nim" | "nvidia-nim" | "nim" => "nvidia_nim".into(),
+        "huggingface" | "hf" => "huggingface".into(),
+        "bedrock" | "aws" | "amazon" => "bedrock".into(),
+        _ => "openai_compatible".into(),
+    }
+}
+
 /// Ensure the MCP home directory and subdirectories exist.
 pub fn ensure_dirs() -> Result<()> {
     let home = mcp_home();

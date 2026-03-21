@@ -397,6 +397,9 @@ async fn test_agent_manager_list_models_not_found() {
 fn test_discovery_includes_registered_tools() {
     mcp::config::ensure_dirs().unwrap();
 
+    // Ensure dirs exist
+    mcp::config::ensure_dirs().unwrap();
+
     // Create a role and register a tool
     let role = mcp::role::RoleDefinition {
         name: "_mcp_test_disc_role".into(),
