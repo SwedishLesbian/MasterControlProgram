@@ -342,9 +342,9 @@ pub enum ConfigCommands {
     /// Validate the current configuration
     Validate,
 
-    /// Set a default value (role, tool)
+    /// Set a default value (role, tool, secondary-provider, secondary-model, tertiary-provider, tertiary-model, poll-interval)
     SetDefault {
-        /// Key to set (role, tool)
+        /// Key to set (role, tool, secondary-provider, secondary-model, tertiary-provider, tertiary-model, poll-interval)
         key: String,
 
         /// Value to set

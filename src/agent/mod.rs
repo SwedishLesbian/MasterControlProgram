@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{info, warn};
 
-use crate::config::{LimitsConfig, McpConfig};
+use crate::config::{LimitsConfig, McpConfig, DefaultConfig};
 use crate::persistence::Database;
 use crate::provider::{self, ChatMessage, Provider};
 
@@ -113,6 +113,7 @@ pub struct AgentManager {
     agents: RwLock<HashMap<u64, Arc<Mutex<AgentHandle>>>>,
     next_id: Mutex<u64>,
     limits: LimitsConfig,
+    defaults: DefaultConfig,
     providers: RwLock<HashMap<String, Arc<dyn Provider>>>,
     db: Arc<Database>,
 }
@@ -137,6 +138,7 @@ impl AgentManager {
             agents: RwLock::new(HashMap::new()),
             next_id: Mutex::new(next_id),
             limits: config.limits.clone(),
+            defaults: config.default.clone(),
             providers: RwLock::new(providers),
             db,
         })
@@ -165,18 +167,29 @@ impl AgentManager {
         }
 
         // Determine provider and model
-        let provider_name = if let Some(p) = req.provider.clone() {
-            p
-        } else {
-            let providers = self.providers.read().await;
-            providers.keys().next().cloned().unwrap_or_default()
-        };
+        let provider_name = req
+            .provider
+            .clone()
+            .unwrap_or_else(|| self.defaults.provider.clone());
 
         let providers = self.providers.read().await;
         let provider_arc = providers
             .get(&provider_name)
             .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not configured"))?
             .clone();
+
+        // Build fallback provider chain (secondary, tertiary)
+        let mut fallback_providers: Vec<Arc<dyn Provider>> = Vec::new();
+        if let Some(ref sec) = self.defaults.secondary_provider {
+            if let Some(p) = providers.get(sec) {
+                fallback_providers.push(p.clone());
+            }
+        }
+        if let Some(ref ter) = self.defaults.tertiary_provider {
+            if let Some(p) = providers.get(ter) {
+                fallback_providers.push(p.clone());
+            }
+        }
 
         let model = req
             .model
@@ -280,7 +293,7 @@ impl AgentManager {
         let agent_handle = handle.clone();
         let db = self.db.clone();
         tokio::spawn(async move {
-            run_agent_loop(agent_handle, provider_arc, db).await;
+            run_agent_loop(agent_handle, provider_arc, fallback_providers, db).await;
         });
 
         info!("Spawned agent {id} with task: {}", req.task);
@@ -465,8 +478,9 @@ impl AgentManager {
         Ok(())
     }
 
-    /// Wait for an agent to reach a terminal state, polling every 500ms.
+    /// Wait for an agent to reach a terminal state, polling at the configured interval.
     pub async fn wait_for_completion(&self, id: u64) -> Result<AgentInfo> {
+        let poll_ms = self.limits.agent_poll_interval_ms;
         loop {
             let info = self.get_status(id).await?;
             match info.status {
@@ -474,7 +488,7 @@ impl AgentManager {
                     return Ok(info);
                 }
                 _ => {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
                 }
             }
         }
@@ -503,9 +517,11 @@ impl AgentManager {
 }
 
 /// The main agent execution loop.
+/// Tries the primary provider first; on failure, attempts fallback providers in order.
 async fn run_agent_loop(
     handle: Arc<Mutex<AgentHandle>>,
     provider: Arc<dyn Provider>,
+    fallback_providers: Vec<Arc<dyn Provider>>,
     db: Arc<Database>,
 ) {
     let (messages, system_prompt, agent_id) = {
@@ -517,11 +533,12 @@ async fn run_agent_loop(
         )
     };
 
-    let sys = if system_prompt.is_empty() {
+    let sys_owned = if system_prompt.is_empty() {
         None
     } else {
-        Some(system_prompt.as_str())
+        Some(system_prompt.clone())
     };
+    let sys = sys_owned.as_deref();
 
     {
         let mut h = handle.lock().await;
@@ -538,60 +555,102 @@ async fn run_agent_loop(
         None,
     );
 
-    match provider.chat(&messages, sys).await {
-        Ok(resp) => {
+    // Build the ordered list of providers to try: primary first, then fallbacks
+    let mut providers_to_try: Vec<Arc<dyn Provider>> = vec![provider];
+    providers_to_try.extend(fallback_providers);
+
+    let mut last_error: Option<String> = None;
+    let mut success = false;
+
+    for (idx, prov) in providers_to_try.iter().enumerate() {
+        if idx > 0 {
+            // Update phase to indicate fallback attempt
+            let phase = format!("retrying-provider-{idx}");
             let mut h = handle.lock().await;
             if h.info.status == AgentStatus::Killed {
                 return;
             }
-            h.info.last_output = Some(resp.content.clone());
-            h.info.last_output_tokens = resp.tokens_used;
-            h.info.messages.push(ChatMessage {
-                role: "assistant".into(),
-                content: resp.content.clone(),
-            });
-            h.info.progress = 1.0;
-            h.info.phase = Some("completed".into());
-            h.info.status = AgentStatus::Completed;
-
-            // Persist to database
+            h.info.phase = Some(phase.clone());
             let _ = db.update_agent_status(
                 agent_id,
-                &AgentStatus::Completed,
-                Some("completed"),
-                1.0,
-                Some(&resp.content),
-                resp.tokens_used,
+                &AgentStatus::Running,
+                Some(&phase),
+                0.1,
+                None,
+                None,
                 None,
             );
-            let seq = h.info.messages.len() - 1;
-            let _ = db.insert_message(agent_id, seq, h.info.messages.last().unwrap());
-
-            if let Err(e) = write_agent_log(&h.info) {
-                warn!("Failed to write agent log: {e}");
-            }
+            info!(
+                "Agent {agent_id}: primary provider failed, trying fallback provider '{}'",
+                prov.name()
+            );
         }
-        Err(e) => {
-            let mut h = handle.lock().await;
-            if h.info.status != AgentStatus::Killed {
-                h.info.status = AgentStatus::Failed;
-                h.info.phase = Some("failed".into());
-                h.info.last_output = Some(format!("Error: {e}"));
 
-                // Persist to database
+        match prov.chat(&messages, sys).await {
+            Ok(resp) => {
+                let mut h = handle.lock().await;
+                if h.info.status == AgentStatus::Killed {
+                    return;
+                }
+                h.info.last_output = Some(resp.content.clone());
+                h.info.last_output_tokens = resp.tokens_used;
+                h.info.provider = prov.name().to_string();
+                h.info.messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: resp.content.clone(),
+                });
+                h.info.progress = 1.0;
+                h.info.phase = Some("completed".into());
+                h.info.status = AgentStatus::Completed;
+
                 let _ = db.update_agent_status(
                     agent_id,
-                    &AgentStatus::Failed,
-                    Some("failed"),
-                    h.info.progress,
-                    Some(&format!("Error: {e}")),
+                    &AgentStatus::Completed,
+                    Some("completed"),
+                    1.0,
+                    Some(&resp.content),
+                    resp.tokens_used,
                     None,
-                    Some(&e.to_string()),
                 );
+                let seq = h.info.messages.len() - 1;
+                let _ = db.insert_message(agent_id, seq, h.info.messages.last().unwrap());
 
                 if let Err(e) = write_agent_log(&h.info) {
                     warn!("Failed to write agent log: {e}");
                 }
+                success = true;
+                break;
+            }
+            Err(e) => {
+                warn!(
+                    "Agent {agent_id}: provider '{}' failed: {e}",
+                    prov.name()
+                );
+                last_error = Some(e.to_string());
+            }
+        }
+    }
+
+    if !success {
+        let err_msg = last_error.unwrap_or_else(|| "Unknown error".into());
+        let mut h = handle.lock().await;
+        if h.info.status != AgentStatus::Killed {
+            h.info.status = AgentStatus::Failed;
+            h.info.phase = Some("failed".into());
+            h.info.last_output = Some(format!("Error: {err_msg}"));
+
+            let _ = db.update_agent_status(
+                agent_id,
+                &AgentStatus::Failed,
+                Some("failed"),
+                h.info.progress,
+                Some(&format!("Error: {err_msg}")),
+                None,
+                Some(&err_msg),
+            );
+
+            if let Err(e) = write_agent_log(&h.info) {
+                warn!("Failed to write agent log: {e}");
             }
         }
     }

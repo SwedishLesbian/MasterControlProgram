@@ -3,6 +3,7 @@ mod anthropic;
 mod nvidia_nim;
 mod huggingface;
 mod bedrock;
+mod ollama;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -15,6 +16,7 @@ pub use anthropic::AnthropicProvider;
 pub use nvidia_nim::NvidiaNimProvider;
 pub use huggingface::HuggingFaceProvider;
 pub use bedrock::BedrockProvider;
+pub use ollama::OllamaProvider;
 
 // ── Shared types ──────────────────────────────────────────────────────
 
@@ -94,6 +96,9 @@ pub fn build_provider(
         }
         "openai-compatible" | "openai_compatible" => Ok(Box::new(OpenAiProvider::new(
             name, &base_url, &model, &api_key, timeout, max_retries,
+        )?)),
+        "ollama" => Ok(Box::new(OllamaProvider::new(
+            name, &base_url, &model, timeout, max_retries,
         )?)),
         other => bail!("Unknown provider type: {other}"),
     }
