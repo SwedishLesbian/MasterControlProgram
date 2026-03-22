@@ -21,6 +21,18 @@ pub struct McpConfig {
 pub struct DefaultConfig {
     pub provider: String,
     pub model: String,
+    /// Secondary provider (fallback if primary fails).
+    #[serde(default)]
+    pub secondary_provider: Option<String>,
+    /// Default model for the secondary provider.
+    #[serde(default)]
+    pub secondary_model: Option<String>,
+    /// Tertiary provider (fallback if primary and secondary fail).
+    #[serde(default)]
+    pub tertiary_provider: Option<String>,
+    /// Default model for the tertiary provider.
+    #[serde(default)]
+    pub tertiary_model: Option<String>,
     /// Default role to use when spawning agents without --role.
     #[serde(default)]
     pub role: Option<String>,
@@ -34,6 +46,10 @@ impl Default for DefaultConfig {
         Self {
             provider: "openai".into(),
             model: "gpt-4o".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: None,
             tool: None,
         }
@@ -81,6 +97,10 @@ pub struct LimitsConfig {
     pub max_children_per_parent: u32,
     #[serde(default = "default_timeout")]
     pub agent_timeout_sec: u64,
+    /// How often agents report status when waiting for completion (milliseconds).
+    /// Default: 60000 (1 minute).
+    #[serde(default = "default_poll_interval_ms")]
+    pub agent_poll_interval_ms: u64,
 }
 
 fn default_max_concurrent() -> u32 {
@@ -95,6 +115,9 @@ fn default_max_children() -> u32 {
 fn default_timeout() -> u64 {
     600
 }
+fn default_poll_interval_ms() -> u64 {
+    60_000
+}
 
 impl Default for LimitsConfig {
     fn default() -> Self {
@@ -103,6 +126,7 @@ impl Default for LimitsConfig {
             max_depth: default_max_depth(),
             max_children_per_parent: default_max_children(),
             agent_timeout_sec: default_timeout(),
+            agent_poll_interval_ms: default_poll_interval_ms(),
         }
     }
 }
@@ -222,6 +246,7 @@ pub fn infer_provider_type(name: &str) -> String {
         "nvidia_nim" | "nvidia-nim" | "nim" => "nvidia_nim".into(),
         "huggingface" | "hf" => "huggingface".into(),
         "bedrock" | "aws" | "amazon" => "bedrock".into(),
+        "ollama" => "ollama".into(),
         _ => "openai_compatible".into(),
     }
 }
@@ -233,6 +258,7 @@ pub fn infer_provider_url(provider_type: &str) -> Option<String> {
         "anthropic" => Some("https://api.anthropic.com/v1".into()),
         "nvidia_nim" | "nvidia-nim" => Some("https://integrate.api.nvidia.com/v1".into()),
         "huggingface" | "hf" => Some("https://api-inference.huggingface.co/models".into()),
+        "ollama" => Some("http://localhost:11434".into()),
         _ => None,
     }
 }

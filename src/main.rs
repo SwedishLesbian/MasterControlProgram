@@ -19,10 +19,36 @@ use crate::cli::*;
 use crate::config::{ensure_dirs, load_config};
 use crate::role::RoleDefinition;
 
+/// Known subcommands — used to detect direct-prompt mode.
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "spawn", "status", "agent", "agents", "role", "config",
+    "provider", "tool", "workflow", "server", "logs", "diagnose", "alias",
+];
+
+/// Returns true if the process args indicate direct-prompt mode:
+/// i.e. the first non-flag argument is not a known subcommand.
+fn is_direct_mode() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    let first = args.iter().skip(1).find(|a| !a.starts_with('-'));
+    match first {
+        Some(f) => !KNOWN_SUBCOMMANDS.contains(&f.as_str()),
+        None => false,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     logging::init_logging()?;
     ensure_dirs()?;
+
+    // Direct-prompt mode: mastercontrolprogram "some task" [--role X] [--model X] [--provider X]
+    if is_direct_mode() {
+        let config = load_config()?;
+        let db = Arc::new(persistence::Database::open()?);
+        let manager = Arc::new(AgentManager::new(&config, db)?);
+        let exit_code = run_direct_prompt(&manager, &config).await;
+        std::process::exit(exit_code);
+    }
 
     let cli = Cli::parse();
     let config = load_config()?;
@@ -509,6 +535,129 @@ async fn main() -> Result<()> {
     std::process::exit(exit_code);
 }
 
+/// Run a prompt directly without a subcommand.
+/// Syntax: mastercontrolprogram "task" [--role NAME] [--model ID] [--provider NAME] [--json]
+/// Prints only the agent output to stdout and exits.
+async fn run_direct_prompt(manager: &AgentManager, config: &config::McpConfig) -> i32 {
+    let raw: Vec<String> = std::env::args().collect();
+
+    // Parse simple flags from raw args
+    let mut role: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut provider: Option<String> = None;
+    let mut json_output = config.cli.json_output;
+    let mut task_parts: Vec<String> = Vec::new();
+
+    let mut i = 1usize;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--json" => {
+                json_output = true;
+            }
+            "--role" => {
+                i += 1;
+                if i < raw.len() {
+                    role = Some(raw[i].clone());
+                }
+            }
+            "--model" => {
+                i += 1;
+                if i < raw.len() {
+                    model = Some(raw[i].clone());
+                }
+            }
+            "--provider" => {
+                i += 1;
+                if i < raw.len() {
+                    provider = Some(raw[i].clone());
+                }
+            }
+            arg if arg.starts_with("--role=") => {
+                role = Some(arg["--role=".len()..].to_string());
+            }
+            arg if arg.starts_with("--model=") => {
+                model = Some(arg["--model=".len()..].to_string());
+            }
+            arg if arg.starts_with("--provider=") => {
+                provider = Some(arg["--provider=".len()..].to_string());
+            }
+            arg if !arg.starts_with('-') => {
+                task_parts.push(arg.to_string());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let task = task_parts.join(" ");
+    if task.is_empty() {
+        eprintln!("Error: no task provided");
+        return 1;
+    }
+
+    // Resolve role
+    let mut sys_prompt: Option<String> = None;
+    let mut resolved_model = model;
+    let mut resolved_provider = provider;
+    let mut resolved_soul: Option<String> = None;
+    let mut resolved_role_name = role.clone();
+
+    if let Some(ref rn) = role {
+        if let Ok(role_def) = role::get_role(rn) {
+            sys_prompt = Some(role::resolve_system_prompt(&role_def).unwrap_or_default());
+            if resolved_model.is_none() {
+                resolved_model = role_def.default_model;
+            }
+            if resolved_provider.is_none() {
+                resolved_provider = role_def.default_provider;
+            }
+            resolved_soul = role_def.soul;
+            resolved_role_name = Some(role_def.role.unwrap_or(rn.clone()));
+        }
+    }
+
+    let req = SpawnRequest {
+        task,
+        role: resolved_role_name,
+        soul: resolved_soul,
+        model: resolved_model,
+        provider: resolved_provider,
+        depth: None,
+        max_depth: None,
+        max_children: None,
+        timeout_sec: None,
+        system_prompt: sys_prompt,
+        parent_id: None,
+    };
+
+    match manager.spawn(req).await {
+        Ok(resp) => {
+            match manager.wait_for_completion(resp.id).await {
+                Ok(info) => {
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&info).unwrap_or_default());
+                    } else if let Some(ref output) = info.last_output {
+                        println!("{output}");
+                    }
+                    if info.status == agent::AgentStatus::Failed {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
+}
+
 fn handle_role_command(cmd: RoleCommands, json_output: bool) -> Result<i32> {
     match cmd {
         RoleCommands::Create {
@@ -620,39 +769,59 @@ async fn handle_config_command(
             if json_output {
                 println!("{}", serde_json::to_string_pretty(config)?);
             } else {
-                println!("Default provider: {}", config.default.provider);
-                println!("Default model:    {}", config.default.model);
+                println!("Default provider:    {}", config.default.provider);
+                println!("Default model:       {}", config.default.model);
+                if let Some(ref sec) = config.default.secondary_provider {
+                    println!(
+                        "Secondary provider: {sec} (model: {})",
+                        config.default.secondary_model.as_deref().unwrap_or("provider default")
+                    );
+                }
+                if let Some(ref ter) = config.default.tertiary_provider {
+                    println!(
+                        "Tertiary provider:  {ter} (model: {})",
+                        config.default.tertiary_model.as_deref().unwrap_or("provider default")
+                    );
+                }
                 println!(
-                    "Default role:     {}",
+                    "Default role:        {}",
                     config.default.role.as_deref().unwrap_or("(none)")
                 );
                 println!(
-                    "Default tool:     {}",
+                    "Default tool:        {}",
                     config.default.tool.as_deref().unwrap_or("(none)")
                 );
                 println!();
-                println!("Server bind:      {}", config.server.bind);
-                println!("Server enabled:   {}", config.server.enabled);
+                println!("Server bind:         {}", config.server.bind);
+                println!("Server enabled:      {}", config.server.enabled);
                 println!();
                 println!("Limits:");
                 println!(
-                    "  Max concurrent agents: {}",
+                    "  Max concurrent agents:  {}",
                     config.limits.max_concurrent_agents
                 );
-                println!("  Max depth:             {}", config.limits.max_depth);
+                println!("  Max depth:              {}", config.limits.max_depth);
                 println!(
-                    "  Max children/parent:   {}",
+                    "  Max children/parent:    {}",
                     config.limits.max_children_per_parent
                 );
                 println!(
-                    "  Agent timeout:         {}s",
+                    "  Agent timeout:          {}s",
                     config.limits.agent_timeout_sec
+                );
+                println!(
+                    "  Agent poll interval:    {}ms",
+                    config.limits.agent_poll_interval_ms
                 );
                 println!();
                 println!("Providers:");
                 for (name, entry) in &config.provider {
                     let marker = if name == &config.default.provider {
-                        " (default)"
+                        " (primary)"
+                    } else if config.default.secondary_provider.as_deref() == Some(name) {
+                        " (secondary)"
+                    } else if config.default.tertiary_provider.as_deref() == Some(name) {
+                        " (tertiary)"
                     } else {
                         ""
                     };
@@ -792,8 +961,57 @@ async fn handle_config_command(
                         println!("Default tool set to: {value}");
                     }
                 }
+                "secondary-provider" | "secondary_provider" => {
+                    new_config.default.secondary_provider = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"secondary_provider": value}));
+                    } else {
+                        println!("Secondary provider set to: {value}");
+                    }
+                }
+                "secondary-model" | "secondary_model" => {
+                    new_config.default.secondary_model = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"secondary_model": value}));
+                    } else {
+                        println!("Secondary model set to: {value}");
+                    }
+                }
+                "tertiary-provider" | "tertiary_provider" => {
+                    new_config.default.tertiary_provider = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"tertiary_provider": value}));
+                    } else {
+                        println!("Tertiary provider set to: {value}");
+                    }
+                }
+                "tertiary-model" | "tertiary_model" => {
+                    new_config.default.tertiary_model = Some(value.clone());
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"tertiary_model": value}));
+                    } else {
+                        println!("Tertiary model set to: {value}");
+                    }
+                }
+                "poll-interval" | "poll_interval" | "agent-poll-interval" | "agent_poll_interval" => {
+                    let ms: u64 = value.parse().map_err(|_| anyhow::anyhow!("poll-interval must be a number in milliseconds"))?;
+                    new_config.limits.agent_poll_interval_ms = ms;
+                    config::save_config(&new_config)?;
+                    if json_output {
+                        println!("{}", json!({"agent_poll_interval_ms": ms}));
+                    } else {
+                        println!("Agent poll interval set to: {ms}ms");
+                    }
+                }
                 other => {
-                    eprintln!("Unknown default key '{other}'. Valid keys: role, tool");
+                    eprintln!(
+                        "Unknown default key '{other}'. Valid keys: role, tool, \
+                         secondary-provider, secondary-model, tertiary-provider, tertiary-model, poll-interval"
+                    );
                     return Ok(1);
                 }
             }
