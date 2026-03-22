@@ -18,6 +18,10 @@ pub enum Commands {
         /// The task description
         task: String,
 
+        /// Detach: fire and forget (don't wait for completion)
+        #[arg(long)]
+        detach: bool,
+
         /// Role name to use
         #[arg(long)]
         role: Option<String>,

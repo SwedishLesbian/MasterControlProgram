@@ -465,6 +465,21 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Wait for an agent to reach a terminal state, polling every 500ms.
+    pub async fn wait_for_completion(&self, id: u64) -> Result<AgentInfo> {
+        loop {
+            let info = self.get_status(id).await?;
+            match info.status {
+                AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Killed => {
+                    return Ok(info);
+                }
+                _ => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+    }
+
     pub async fn get_providers(&self) -> Vec<String> {
         let providers = self.providers.read().await;
         providers.keys().cloned().collect()

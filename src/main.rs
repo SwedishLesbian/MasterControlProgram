@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     let exit_code = match cli.command {
         Commands::Spawn {
             task,
+            detach,
             role: role_name,
             model,
             provider,
@@ -97,9 +98,9 @@ async fn main() -> Result<()> {
 
             match manager.spawn(req).await {
                 Ok(resp) => {
-                    if json_output {
+                    if json_output && detach {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else {
+                    } else if detach {
                         println!("Agent started with id {}", resp.id);
                         if let Some(ref s) = resp.soul {
                             println!("Soul: {s}");
@@ -109,6 +110,30 @@ async fn main() -> Result<()> {
                         }
                         println!("Model: {}", resp.model);
                         println!("Provider: {}", resp.provider);
+                        println!("(detached — use 'status {}' to check later)", resp.id);
+                    } else {
+                        // Wait for completion
+                        if !json_output {
+                            println!("Agent {} running (model: {}, provider: {})...",
+                                resp.id, resp.model, resp.provider);
+                        }
+                        match manager.wait_for_completion(resp.id).await {
+                            Ok(info) => {
+                                if json_output {
+                                    println!("{}", serde_json::to_string_pretty(&info)?);
+                                } else {
+                                    println!("\n── Agent {} {} ──", info.id, info.status);
+                                    if let Some(ref output) = info.last_output {
+                                        println!("{output}");
+                                    } else {
+                                        println!("(no output)");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error waiting for agent: {e}");
+                            }
+                        }
                     }
                     0
                 }
@@ -141,6 +166,10 @@ async fn main() -> Result<()> {
                     println!("Provider: {}", info.provider);
                     if let Some(remaining) = info.timeout_remaining_sec {
                         println!("Timeout remaining: {remaining}s");
+                    }
+                    if let Some(ref output) = info.last_output {
+                        println!("\n── Output ──");
+                        println!("{output}");
                     }
                 }
                 0
