@@ -501,7 +501,7 @@ async fn main() -> Result<()> {
                     }))?
                 );
             } else {
-                println!("=== MCP Diagnostics ===\n");
+                println!("=== MasterControlProgram Diagnostics ===\n");
                 println!("Agents: {} total", agents.len());
                 let running = agents
                     .iter()

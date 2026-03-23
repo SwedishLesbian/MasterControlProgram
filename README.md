@@ -15,10 +15,13 @@
 ## Features
 
 - **Multi-provider inference** — OpenAI, Anthropic, NVIDIA NIM, HuggingFace, Amazon Bedrock, and any OpenAI-compatible endpoint
+- **SQLite persistence** — agent state, output, and conversation history survive across process invocations
+- **Blocking spawn** — `spawn` waits for agent completion and prints output; use `--detach` for fire-and-forget
 - **Role-based agents** — soul.md-style identity files with system prompts, tools, and per-role model defaults
 - **Agent lifecycle** — spawn, status, steer (append instructions / patch system prompt), pause, resume, kill
 - **Tool registry** — expose agents as schema-described, discoverable tools for other agents
 - **Workflow engine** — declarative YAML pipelines with spawn, wait, steer, kill, inspect, and summarize steps
+- **CLI config management** — `config init`, `set-provider`, `set-model` (by name or number), `models`, `validate` — no manual TOML editing required
 - **Constraint enforcement** — `maxDepth`, `maxChildren`, `maxConcurrentAgents`, per-agent timeouts
 - **HTTP server mode** — REST API for agent orchestration, usable as a control plane by other agents
 - **JSON-first** — every command supports `--json` for machine-readable output; fully scriptable and non-interactive
@@ -65,9 +68,10 @@ mcp config init
 # Add a provider with your API key
 mcp config set-provider nvidia_nim --api-key "nvapi-..."
 
-# Browse available models and pick one
+# Browse available models and pick one (by name or number)
 mcp config models
 mcp config set-model meta/llama-3.1-8b-instruct
+mcp config set-model 54    # same thing — picks #54 from the list
 
 # Validate everything is set up correctly
 mcp config validate
@@ -91,21 +95,35 @@ max_retries = 2
 
 ### 2. Spawn an agent
 
-```bash
-mcp spawn "Write a fizzbuzz implementation in Rust"
-```
-
-```
-Agent started with id 1
-Model: meta/llama-3.1-8b-instruct
-Provider: nvidia-nim
-```
-
-### 3. Check status
+By default, `spawn` waits for completion and prints the output:
 
 ```bash
-mcp status 1
-mcp status 1 --json
+mcp spawn "What is 2+2? Answer in one word."
+```
+
+```
+Agent 1 running (model: meta/llama-3.1-8b-instruct, provider: nvidia_nim)...
+
+── Agent 1 completed ──
+Four.
+```
+
+Use `--detach` for fire-and-forget:
+
+```bash
+mcp spawn --detach "Write a fizzbuzz implementation in Rust"
+# Agent started with id 2
+# (detached — use 'status 2' to check later)
+```
+
+### 3. Check status and output
+
+Agent state persists in SQLite across process invocations:
+
+```bash
+mcp status 1          # shows status + output
+mcp status 1 --json   # machine-readable
+mcp agents list       # all agents, current and historical
 ```
 
 ### 4. Steer an agent
@@ -381,6 +399,7 @@ src/
 ├── agent/           Agent lifecycle (spawn, run, steer, pause, kill)
 ├── cli/             CLI command definitions (clap)
 ├── config/          TOML config loading + env var resolution
+├── persistence/     SQLite storage (agent state, messages, history)
 ├── provider/        Concrete LLM provider implementations
 │   ├── openai.rs        OpenAI (+ compatible endpoints)
 │   ├── anthropic.rs     Anthropic Messages API
@@ -392,6 +411,18 @@ src/
 ├── workflow/        YAML workflow engine
 ├── server/          HTTP REST API (Axum)
 └── logging/         Per-agent JSON logs
+```
+
+### Data storage
+
+```
+~/.mastercontrolprogram/
+├── config.toml      Global configuration
+├── mcp.db           SQLite database (agents, messages, history)
+├── roles/           Role definitions (*.toml)
+├── tools/           Tool schemas (*.json)
+├── workflows/       Workflow definitions (*.yaml)
+└── logs/            Per-agent JSON logs
 ```
 
 ## License
