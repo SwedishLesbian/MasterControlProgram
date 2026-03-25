@@ -35,13 +35,11 @@ jobs:
         run: cargo test --lib --test unit_tests --test test_tools_and_roles
 
       - name: Integration tests — NVIDIA NIM
-        if: ${{ secrets.MCP_NVIDIA_NIM_KEY != '' }}
         run: cargo test --test integration_nvidia_nim
         env:
           MCP_NVIDIA_NIM_KEY: ${{ secrets.MCP_NVIDIA_NIM_KEY }}
 
       - name: Integration tests — Ollama Cloud
-        if: ${{ secrets.OLLAMA_API_KEY != '' }}
         run: cargo test --test integration_ollama_cloud
         env:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
