@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: x86_64-unknown-linux-gnu-cargo-
+
+      - name: Build
+        run: cargo build
+
+      - name: Unit tests
+        run: cargo test --lib --test unit_tests --test test_tools_and_roles
+
+      - name: Integration tests — NVIDIA NIM
+        if: ${{ secrets.MCP_NVIDIA_NIM_KEY != '' }}
+        run: cargo test --test integration_nvidia_nim
+        env:
+          MCP_NVIDIA_NIM_KEY: ${{ secrets.MCP_NVIDIA_NIM_KEY }}
+
+      - name: Integration tests — Ollama Cloud
+        if: ${{ secrets.OLLAMA_API_KEY != '' }}
+        run: cargo test --test integration_ollama_cloud
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
