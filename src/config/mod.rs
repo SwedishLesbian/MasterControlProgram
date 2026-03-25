@@ -243,7 +243,7 @@ pub fn infer_provider_type(name: &str) -> String {
     match name.to_lowercase().as_str() {
         "openai" => "openai".into(),
         "anthropic" => "anthropic".into(),
-        "nvidia_nim" | "nvidia-nim" | "nim" => "nvidia_nim".into(),
+        "nvidia_nim" | "nvidia-nim" | "nim" | "nvidia" => "nvidia_nim".into(),
         "huggingface" | "hf" => "huggingface".into(),
         "bedrock" | "aws" | "amazon" => "bedrock".into(),
         "ollama" => "ollama".into(),
