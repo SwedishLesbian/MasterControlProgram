@@ -46,6 +46,10 @@ fn test_config_save_and_reload() {
         default: mcp::config::DefaultConfig {
             provider: "openai".into(),
             model: "gpt-4o".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: Some("local_coder".into()),
             tool: Some("coder_agent".into()),
         },
@@ -456,6 +460,10 @@ async fn test_workflow_runner_lifecycle() {
         default: mcp::config::DefaultConfig {
             provider: "openai".into(),
             model: "gpt-4o".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: None,
             tool: None,
         },
@@ -583,6 +591,10 @@ async fn test_spawn_agent_with_local_coder_role_via_nim() {
         default: mcp::config::DefaultConfig {
             provider: "nvidia-nim".into(),
             model: "meta/llama-3.1-8b-instruct".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: Some("_mcp_test_local_coder".into()),
             tool: None,
         },

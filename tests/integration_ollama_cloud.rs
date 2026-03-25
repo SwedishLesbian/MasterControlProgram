@@ -134,6 +134,10 @@ async fn test_ollama_cloud_agent_spawn_and_complete() {
         default: mcp::config::DefaultConfig {
             provider: "ollama-cloud".into(),
             model: "gemma3:4b".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: None,
             tool: None,
         },

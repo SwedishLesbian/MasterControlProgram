@@ -115,6 +115,10 @@ async fn test_nvidia_nim_agent_spawn_and_complete() {
         default: mcp::config::DefaultConfig {
             provider: "nvidia-nim".into(),
             model: "meta/llama-3.1-8b-instruct".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: None,
             tool: None,
         },
@@ -198,6 +202,10 @@ async fn test_nvidia_nim_agent_steer() {
         default: mcp::config::DefaultConfig {
             provider: "nvidia-nim".into(),
             model: "meta/llama-3.1-8b-instruct".into(),
+            secondary_provider: None,
+            secondary_model: None,
+            tertiary_provider: None,
+            tertiary_model: None,
             role: None,
             tool: None,
         },
