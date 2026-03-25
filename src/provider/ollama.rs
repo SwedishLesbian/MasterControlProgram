@@ -11,6 +11,7 @@ pub struct OllamaProvider {
     name: String,
     base_url: String,
     model: String,
+    api_key: Option<String>,
     max_retries: u32,
     http: Client,
 }
@@ -20,6 +21,7 @@ impl OllamaProvider {
         name: &str,
         base_url: &str,
         model: &str,
+        api_key: Option<&str>,
         timeout_secs: u32,
         max_retries: u32,
     ) -> Result<Self> {
@@ -37,6 +39,7 @@ impl OllamaProvider {
             name: name.to_string(),
             base_url: url,
             model: model.to_string(),
+            api_key: api_key.filter(|k| !k.is_empty()).map(String::from),
             max_retries,
             http,
         })
@@ -58,8 +61,8 @@ impl Provider for OllamaProvider {
         messages: &[ChatMessage],
         system_prompt: Option<&str>,
     ) -> Result<ChatResponse> {
-        // Ollama supports OpenAI-compatible /v1/chat/completions
-        let url = format!("{}/v1/chat/completions", self.base_url);
+        // Use the native Ollama /api/chat endpoint (works for both local and cloud)
+        let url = format!("{}/api/chat", self.base_url);
 
         let mut msgs: Vec<Value> = Vec::new();
         if let Some(sys) = system_prompt {
@@ -72,6 +75,7 @@ impl Provider for OllamaProvider {
         let body = json!({
             "model": &self.model,
             "messages": msgs,
+            "stream": false,
         });
 
         let mut last_err = None;
@@ -80,25 +84,28 @@ impl Provider for OllamaProvider {
                 tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
             }
 
-            match self
+            let mut req = self
                 .http
                 .post(&url)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-            {
+                .header("Content-Type", "application/json");
+
+            if let Some(ref key) = self.api_key {
+                req = req.header("Authorization", format!("Bearer {key}"));
+            }
+
+            match req.json(&body).send().await {
                 Ok(r) if r.status().is_success() => {
                     let data: Value = r.json().await?;
+                    let prompt_tokens = data["prompt_eval_count"].as_u64().unwrap_or(0);
+                    let output_tokens = data["eval_count"].as_u64().unwrap_or(0);
+                    let total = prompt_tokens + output_tokens;
                     return Ok(ChatResponse {
-                        content: data["choices"][0]["message"]["content"]
+                        content: data["message"]["content"]
                             .as_str()
                             .unwrap_or("")
                             .to_string(),
-                        tokens_used: data["usage"]["total_tokens"].as_u64(),
-                        finish_reason: data["choices"][0]["finish_reason"]
-                            .as_str()
-                            .map(String::from),
+                        tokens_used: if total > 0 { Some(total) } else { None },
+                        finish_reason: data["done_reason"].as_str().map(String::from),
                     });
                 }
                 Ok(r) => {

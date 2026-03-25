@@ -98,7 +98,12 @@ pub fn build_provider(
             name, &base_url, &model, &api_key, timeout, max_retries,
         )?)),
         "ollama" => Ok(Box::new(OllamaProvider::new(
-            name, &base_url, &model, timeout, max_retries,
+            name,
+            &base_url,
+            &model,
+            if api_key.is_empty() { None } else { Some(api_key.as_str()) },
+            timeout,
+            max_retries,
         )?)),
         other => bail!("Unknown provider type: {other}"),
     }
